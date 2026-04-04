@@ -1,0 +1,39 @@
+[package]
+name = "mev-sweeper"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Ethers + Flashbots
+ethers = { version = "2.0.14", features = ["rustls", "ws", "abigen", "legacy"] }
+ethers-flashbots = "0.15.0"
+
+# Async
+tokio = { version = "1.0", features = ["full"] }
+
+# HTTP
+reqwest = "0.11"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Paralelismo
+rayon = "1.7"
+
+# CLI
+clap = { version = "4.0", features = ["derive"] }
+
+# Utilitários
+chrono = "0.4"
+url = "2.3"
+thiserror = "1.0"
+hex = "0.4"
+rand = "0.8"
+dotenvy = "0.15"
+axum = "0.7"
+rusqlite = { version = "0.32", features = ["bundled"] }
