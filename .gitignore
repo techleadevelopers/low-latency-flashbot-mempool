@@ -1,0 +1,84 @@
+# Sensitive files - never commit
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+keys.txt
+keys.json
+wallets.json
+secrets.json
+*.pem
+*.key
+*.pk
+*.priv
+*.secret
+
+# Databases / local state
+*.db
+*.sqlite
+*.sqlite3
+
+# Build artifacts
+/target/
+**/target/
+*.rs.bk
+**/*.rs.bk
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs / temp
+*.log
+*.tmp
+*.temp
+*.cache
+*.pid
+.secret/
+secrets/
+
+# Local config overrides
+config.local.toml
+config.override.toml
+.env.local
+.env.production
+
+# Backups
+*.bak
+*.backup
+*.old
+
+# Flashbots / local outputs
+flashbots-simulations.json
+bundle-results.json
+
+# Test artifacts
+tests/wallets/*.json
+tests/*.json
+!tests/*.rs
+!*.example.json
+!*.sample.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Node
+node_modules/
+package-lock.json
+
+# Docker
+*.dockerignore
+Dockerfile.local
+
+# CI/CD secrets
+.github/secrets/
+.gitlab/secrets/
