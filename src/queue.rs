@@ -1,3 +1,4 @@
+use crate::config::Config;
 use ethers::prelude::*;
 use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
@@ -22,6 +23,8 @@ impl OperationType {
 pub struct ResidualCandidate {
     pub wallet: Address,
     pub operation: OperationType,
+    pub requires_approve: bool,
+    pub approval_tokens: Vec<Address>,
     pub native_balance: U256,
     pub token_value_wei: U256,
     pub stable_token_value_wei: U256,
@@ -53,6 +56,30 @@ impl ResidualCandidate {
         let cost = self.estimated_cost_wei.as_u128() as f64;
         ((profit / cost) * 10_000.0) as u64
     }
+}
+
+pub fn estimated_bundle_gas_units(config: &Config, candidate: &ResidualCandidate) -> u64 {
+    let approve_gas = config
+        .estimated_approve_gas
+        .saturating_mul(candidate.approval_tokens.len() as u64);
+    match candidate.operation {
+        OperationType::Install => config
+            .estimated_install_gas
+            .saturating_add(approve_gas)
+            .saturating_add(config.estimated_exec_gas)
+            .saturating_add(config.estimated_bundle_overhead_gas),
+        OperationType::Exec => approve_gas
+            .saturating_add(config.estimated_exec_gas)
+            .saturating_add(config.estimated_bundle_overhead_gas),
+    }
+}
+
+pub fn estimated_total_cost_wei(
+    config: &Config,
+    gas_price: U256,
+    candidate: &ResidualCandidate,
+) -> U256 {
+    gas_price.saturating_mul(U256::from(estimated_bundle_gas_units(config, candidate)))
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +196,8 @@ mod tests {
         ResidualCandidate {
             wallet: Address::from_low_u64_be(wallet_idx),
             operation: OperationType::Exec,
+            requires_approve: false,
+            approval_tokens: Vec::new(),
             native_balance: U256::from(profit_wei + cost_wei),
             token_value_wei: U256::zero(),
             stable_token_value_wei: U256::zero(),
