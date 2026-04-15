@@ -2,7 +2,7 @@ use crate::cache::RuntimeCache;
 use crate::config::{BotMode, Config};
 use crate::contract::Simple7702Delegate;
 use crate::dashboard::DashboardHandle;
-use crate::queue::ResidualCandidate;
+use crate::queue::{OperationType, ResidualCandidate};
 use crate::rpc::RpcFleet;
 use ethers::middleware::SignerMiddleware;
 use ethers::prelude::*;
@@ -26,7 +26,23 @@ fn sponsor_funding_wei(cost_wei: U256) -> U256 {
         .saturating_add(U256::from(10_000_000_000_000u64))
 }
 
-pub async fn sweep(
+fn estimated_total_gas_units(config: &Config, operation: OperationType) -> u64 {
+    match operation {
+        OperationType::Install => config
+            .estimated_install_gas
+            .saturating_add(config.estimated_exec_gas)
+            .saturating_add(config.estimated_bundle_overhead_gas),
+        OperationType::Exec => config
+            .estimated_exec_gas
+            .saturating_add(config.estimated_bundle_overhead_gas),
+    }
+}
+
+fn estimated_operation_cost_wei(config: &Config, gas_price: U256, operation: OperationType) -> U256 {
+    gas_price.saturating_mul(U256::from(estimated_total_gas_units(config, operation)))
+}
+
+pub async fn execute_job(
     wallet: LocalWallet,
     candidate: ResidualCandidate,
     contract_addr: Address,
@@ -35,7 +51,71 @@ pub async fn sweep(
     runtime_cache: Arc<RuntimeCache>,
     dashboard: DashboardHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let sweep_started = std::time::Instant::now();
+    match candidate.operation {
+        OperationType::Exec => {
+            execute_exec_job(
+                wallet,
+                candidate,
+                contract_addr,
+                config,
+                rpc_fleet,
+                runtime_cache,
+                dashboard,
+            )
+            .await
+        }
+        OperationType::Install => {
+            execute_install_job(wallet, candidate, config, dashboard).await
+        }
+    }
+}
+
+async fn execute_install_job(
+    wallet: LocalWallet,
+    candidate: ResidualCandidate,
+    config: &Config,
+    dashboard: DashboardHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let total_cost_wei = estimated_operation_cost_wei(
+        config,
+        U256::from(15_000_000_000u64),
+        candidate.operation,
+    );
+    let total_cost_eth = wei_to_eth_f64(total_cost_wei);
+    let profit_eth = wei_to_eth_f64(candidate.estimated_net_profit_wei);
+
+    if !config.mock_contract_mode {
+        let message = format!(
+            "install/delegate required for {:?}, but the current ethers stack in this project does not build EIP-7702 install transactions yet",
+            wallet.address()
+        );
+        dashboard.event("error", message.clone());
+        return Err(message.into());
+    }
+
+    dashboard.event(
+        "info",
+        format!(
+            "mock install/delegate prepared for {:?} | total_cost={:.6} ETH | expected_profit={:.6} ETH",
+            wallet.address(),
+            total_cost_eth,
+            profit_eth
+        ),
+    );
+
+    Ok(())
+}
+
+async fn execute_exec_job(
+    wallet: LocalWallet,
+    candidate: ResidualCandidate,
+    contract_addr: Address,
+    config: &Config,
+    rpc_fleet: Arc<RpcFleet>,
+    runtime_cache: Arc<RuntimeCache>,
+    dashboard: DashboardHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let exec_started = std::time::Instant::now();
     let amount = candidate.total_residual_wei;
     let estimated_profit_wei = candidate.estimated_net_profit_wei;
     let estimated_cost_wei = candidate.estimated_cost_wei;
@@ -43,7 +123,7 @@ pub async fn sweep(
     let roi_bps = candidate.roi_bps();
 
     info!(
-        "starting residual sweep wallet={:?} class={} total={:.6} profit={:.6} roi={}bps",
+        "starting residual exec wallet={:?} class={} total={:.6} profit={:.6} roi={}bps",
         wallet.address(),
         candidate.asset_class,
         wei_to_eth_f64(amount),
@@ -95,12 +175,12 @@ pub async fn sweep(
         if contract_state.frozen {
             rpc_fleet.report_success(endpoint.id, started.elapsed());
             warn!(
-                "contract is frozen, aborting sweep for {:?}",
+                "contract is frozen, aborting exec for {:?}",
                 wallet.address()
             );
             dashboard.event(
                 "warn",
-                format!("contract frozen, sweep aborted for {:?}", wallet.address()),
+                format!("contract frozen, exec aborted for {:?}", wallet.address()),
             );
             return Ok(());
         }
@@ -145,7 +225,7 @@ pub async fn sweep(
         let calldata = contract
             .sweep_all(filtered_tokens)
             .calldata()
-            .ok_or("failed to build sweep calldata")?;
+            .ok_or("failed to build exec calldata")?;
 
         let gas_price = match runtime_cache
             .gas_price(provider.clone(), &config.network)
@@ -165,7 +245,7 @@ pub async fn sweep(
         (calldata, gas_price)
     };
 
-    let final_cost_wei = gas_price.saturating_mul(U256::from(config.estimated_sweep_gas));
+    let final_cost_wei = estimated_operation_cost_wei(config, gas_price, candidate.operation);
     let final_profit_wei = amount.saturating_sub(final_cost_wei);
     let final_profit_eth = wei_to_eth_f64(final_profit_wei);
     let min_profit_eth = candidate_min_profit_eth(config, &candidate.asset_class);
@@ -173,7 +253,7 @@ pub async fn sweep(
 
     if final_profit_wei < min_profit_wei {
         let message = format!(
-            "residual sweep no longer profitable: profit={:.6} ETH < min={:.6} ETH",
+            "residual exec no longer profitable: profit={:.6} ETH < min={:.6} ETH",
             final_profit_eth, min_profit_eth
         );
         warn!("{}", message);
@@ -195,14 +275,14 @@ pub async fn sweep(
         .to(contract_addr)
         .data(calldata)
         .value(amount)
-        .gas(config.estimated_sweep_gas)
+        .gas(config.estimated_exec_gas)
         .gas_price(gas_price)
         .from(wallet.address())
         .into();
 
     dashboard.record_latency(
         "tx_prepare",
-        sweep_started.elapsed().as_millis(),
+        exec_started.elapsed().as_millis(),
         Some(&format!("{:?}", wallet.address())),
         Some(&endpoint.name),
     );
@@ -212,7 +292,7 @@ pub async fn sweep(
             dashboard.event(
                 "info",
                 format!(
-                    "shadow mode: residual sweep prepared for {:?} via {} | value={} ETH | profit={:.6} ETH | ROI={} bps",
+                    "shadow mode: residual exec prepared for {:?} via {} | value={} ETH | profit={:.6} ETH | ROI={} bps",
                     wallet.address(),
                     endpoint.name,
                     wei_to_eth_f64(amount),
@@ -233,7 +313,7 @@ pub async fn sweep(
                 dashboard.event(
                     "info",
                     format!(
-                        "paper mode without ALLOW_SEND: residual sweep for {:?} blocked",
+                        "paper mode without ALLOW_SEND: residual exec for {:?} blocked",
                         wallet.address()
                     ),
                 );
@@ -288,7 +368,6 @@ pub async fn sweep(
     let signed_bundle_tx = tx.rlp_signed(&signature);
     let sponsored_mode = config.use_external_gas_sponsor;
 
-    // Build bundle: sponsor -> sweep (no approve)
     let bundle = if sponsored_mode {
         let sponsor_funding = sponsor_funding_wei(final_cost_wei);
         let sponsor_tx: TypedTransaction = TransactionRequest::new()
@@ -333,7 +412,7 @@ pub async fn sweep(
             dashboard.event(
                 "success",
                 format!(
-                    "residual sweep succeeded for {:?} | profit={:.6} ETH | ROI={} bps{}",
+                    "residual exec succeeded for {:?} | profit={:.6} ETH | ROI={} bps{}",
                     wallet.address(),
                     final_profit_eth,
                     roi_bps,
