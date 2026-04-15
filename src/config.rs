@@ -46,6 +46,9 @@ pub struct Config {
     pub min_balance: f64, // AGORA: reserva mínima de segurança (não mais gatilho)
     pub min_net_profit_eth: f64, // AGORA: lucro mínimo para executar sweep
     pub estimated_sweep_gas: u64,
+    pub estimated_install_gas: u64,
+    pub estimated_exec_gas: u64,
+    pub estimated_bundle_overhead_gas: u64,
     pub profit_margin_bps: u64, // DEPRECATED: será ignorado na nova lógica
     pub interval: u64,
     pub min_scan_interval_ms: u64,
@@ -218,6 +221,17 @@ impl Config {
             .parse::<f64>()?;
         let estimated_sweep_gas = env::var("ESTIMATED_SWEEP_GAS")
             .unwrap_or_else(|_| "250000".to_string())
+            .parse::<u64>()?;
+        let estimated_install_gas = env::var("ESTIMATED_INSTALL_GAS")
+            .unwrap_or_else(|_| "180000".to_string())
+            .parse::<u64>()?;
+        let estimated_exec_gas = env::var("ESTIMATED_EXEC_GAS")
+            .ok()
+            .map(|value| value.trim().parse::<u64>())
+            .transpose()?
+            .unwrap_or(estimated_sweep_gas);
+        let estimated_bundle_overhead_gas = env::var("ESTIMATED_BUNDLE_OVERHEAD_GAS")
+            .unwrap_or_else(|_| "25000".to_string())
             .parse::<u64>()?;
         let profit_margin_bps = env::var("PROFIT_MARGIN_BPS")
             .unwrap_or_else(|_| "12000".to_string())
@@ -395,6 +409,9 @@ impl Config {
             min_balance,
             min_net_profit_eth,
             estimated_sweep_gas,
+            estimated_install_gas,
+            estimated_exec_gas,
+            estimated_bundle_overhead_gas,
             profit_margin_bps,
             interval,
             min_scan_interval_ms,
@@ -457,6 +474,13 @@ impl Config {
         println!("Disable Public Fallback: {}", self.disable_public_fallback);
         println!("Min Balance (safety reserve): {} ETH", self.min_balance);
         println!("Min Net Profit: {} ETH", self.min_net_profit_eth);
+        println!(
+            "Estimated Gas: install={} exec={} bundle_overhead={} legacy_sweep={}",
+            self.estimated_install_gas,
+            self.estimated_exec_gas,
+            self.estimated_bundle_overhead_gas,
+            self.estimated_sweep_gas
+        );
         println!(
             "Min ROI: {} bps ({}%)",
             self.min_roi_bps,
