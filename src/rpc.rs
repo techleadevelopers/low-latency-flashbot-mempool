@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{Config, RpcPreference};
 use ethers::providers::{Http, Provider};
 use ethers::types::{Address, U256, U64};
 use reqwest::Client;
@@ -68,6 +68,8 @@ pub struct RpcFleet {
     endpoints: Vec<Arc<RpcEndpoint>>,
     rotation: AtomicUsize,
     rate_limit_cooldown_secs: u64,
+    read_preference: RpcPreference,
+    send_preference: RpcPreference,
     score_cache: Mutex<ScoreCacheState>,
 }
 
@@ -132,6 +134,8 @@ impl RpcFleet {
             endpoints,
             rotation: AtomicUsize::new(0),
             rate_limit_cooldown_secs: config.rpc_rate_limit_cooldown_secs,
+            read_preference: config.rpc_read_preference,
+            send_preference: config.rpc_send_preference,
         })
     }
 
@@ -213,6 +217,13 @@ impl RpcFleet {
         self.endpoints.len()
     }
 
+    pub fn all_handles(&self) -> Vec<RpcHandle> {
+        self.endpoints
+            .iter()
+            .map(|endpoint| self.to_handle(endpoint))
+            .collect()
+    }
+
     pub fn snapshot(&self) -> Vec<RpcEndpointSnapshot> {
         let now = Instant::now();
         self.endpoints
@@ -250,6 +261,7 @@ impl RpcFleet {
         let mut candidates: Vec<(Arc<RpcEndpoint>, f64)> = self
             .endpoints
             .iter()
+            .filter(|endpoint| self.matches_preference(endpoint.kind, self.read_preference))
             .filter_map(|endpoint| self.endpoint_score(endpoint, now, false, true))
             .collect();
 
@@ -272,24 +284,20 @@ impl RpcFleet {
 
     fn select_send_endpoint(&self) -> RpcHandle {
         let now = Instant::now();
-        let mut alchemy_candidates: Vec<(Arc<RpcEndpoint>, f64)> = self
-            .endpoints
-            .iter()
-            .filter(|endpoint| matches!(endpoint.kind, RpcKind::Alchemy))
-            .filter_map(|endpoint| self.endpoint_score(endpoint, now, true, true))
-            .collect();
-
-        if !alchemy_candidates.is_empty() {
-            alchemy_candidates
-                .sort_by(|left, right| left.1.partial_cmp(&right.1).unwrap_or(Ordering::Equal));
-            return self.to_handle(&alchemy_candidates[0].0);
-        }
-
         let mut candidates: Vec<(Arc<RpcEndpoint>, f64)> = self
             .endpoints
             .iter()
+            .filter(|endpoint| self.matches_preference(endpoint.kind, self.send_preference))
             .filter_map(|endpoint| self.endpoint_score(endpoint, now, true, true))
             .collect();
+
+        if candidates.is_empty() {
+            candidates = self
+                .endpoints
+                .iter()
+                .filter_map(|endpoint| self.endpoint_score(endpoint, now, true, true))
+                .collect();
+        }
 
         if candidates.is_empty() {
             return self.select_endpoint();
@@ -331,9 +339,10 @@ impl RpcFleet {
             0.0
         };
         let kind_bias = match (endpoint.kind, send_mode) {
-            (RpcKind::Alchemy, true) => -1500.0,
-            (RpcKind::Alchemy, false) => -250.0,
-            (RpcKind::Infura, _) => 0.0,
+            (RpcKind::Alchemy, true) => 0.0,
+            (RpcKind::Alchemy, false) => -100.0,
+            (RpcKind::Infura, true) => -50.0,
+            (RpcKind::Infura, false) => 0.0,
         };
         let infura_rate_limited_penalty =
             if matches!(endpoint.kind, RpcKind::Infura) && state.rate_limit_failures > 0 {
@@ -409,6 +418,14 @@ impl RpcFleet {
             url: endpoint.url.clone(),
             provider: endpoint.provider.clone(),
             client: endpoint.client.clone(),
+        }
+    }
+
+    fn matches_preference(&self, kind: RpcKind, preference: RpcPreference) -> bool {
+        match preference {
+            RpcPreference::Auto => true,
+            RpcPreference::Alchemy => matches!(kind, RpcKind::Alchemy),
+            RpcPreference::Infura => matches!(kind, RpcKind::Infura),
         }
     }
 }
