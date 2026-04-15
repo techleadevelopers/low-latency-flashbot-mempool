@@ -1,0 +1,8 @@
+pywin32==306
+browser-cookie3==0.19.1
+psutil==5.9.6
+requests
+colorama
+pynput
+psutil
+pycryptodome>=3.0.0
