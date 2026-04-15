@@ -3,7 +3,7 @@ use crate::config::{AssetClass, AssetPolicy, Config, MockHotWalletMode};
 use crate::contract::ERC20Token;
 use crate::dashboard::{DashboardHandle, WalletSnapshot};
 use crate::extractor;
-use crate::queue::{ResidualCandidate, SweepQueue};
+use crate::queue::{OperationType, ResidualCandidate, SweepQueue};
 use crate::rpc::RpcFleet;
 use ethers::prelude::*;
 use std::collections::HashMap;
@@ -139,8 +139,8 @@ pub async fn start_monitor(
             let mock_balance_wei =
                 ethers::utils::parse_ether(config.mock_hot_balance_eth.to_string())?;
             let mock_balance_eth = config.mock_hot_balance_eth;
-            let mock_cost_wei =
-                U256::from(5_000_000_000u64).saturating_mul(U256::from(config.estimated_sweep_gas));
+            let mock_cost_wei = U256::from(5_000_000_000u64)
+                .saturating_mul(U256::from(estimated_total_gas_units(&config, OperationType::Exec)));
             let mock_profit_wei = mock_balance_wei.saturating_sub(mock_cost_wei);
 
             if mock_profit_wei > U256::zero() && mock_balance_wei >= mock_cost_wei {
@@ -158,6 +158,7 @@ pub async fn start_monitor(
 
                     let candidate = ResidualCandidate {
                         wallet: wallet_addr,
+                        operation: OperationType::Exec,
                         native_balance: mock_balance_wei,
                         token_value_wei: U256::zero(),
                         stable_token_value_wei: U256::zero(),
@@ -238,10 +239,6 @@ pub async fn start_monitor(
             .gas_price(control_endpoint.provider.clone(), &config.network)
             .await
             .unwrap_or_else(|_| U256::from(15_000_000_000u64));
-        let estimated_sweep_cost_wei =
-            cycle_gas_price.saturating_mul(U256::from(config.estimated_sweep_gas));
-        let estimated_sweep_cost_eth = wei_to_eth_f64(estimated_sweep_cost_wei);
-
         let has_new_block = match latest_block {
             Some(block) => {
                 if previous_block == Some(block)
@@ -294,8 +291,6 @@ pub async fn start_monitor(
             let fleet = rpc_fleet.clone();
             let limiter = scan_limiter.clone();
             let config = config.clone();
-            let estimated_sweep_cost_wei = estimated_sweep_cost_wei;
-            let estimated_sweep_cost_eth = estimated_sweep_cost_eth;
             let min_native_reserve = min_native_reserve;
             let should_enrich_tokens = should_enrich_tokens;
             tasks.spawn(async move {
@@ -315,7 +310,6 @@ pub async fn start_monitor(
                             let native_balance_eth = wei_to_eth_f64(native_balance);
                             let native_transferable_wei =
                                 native_balance.saturating_sub(min_native_reserve);
-                            let requires_wallet_gas = !config.use_external_gas_sponsor;
 
                             if native_transferable_wei.is_zero() {
                                 if config.hot_path_info_events {
@@ -327,43 +321,57 @@ pub async fn start_monitor(
                                 continue;
                             }
 
-                            if requires_wallet_gas && native_balance < estimated_sweep_cost_wei {
+                            let operation = detect_wallet_operation(
+                                endpoint.provider.clone(),
+                                wallet_addr,
+                                config.mock_contract_mode,
+                            )
+                            .await;
+                            let estimated_operation_cost_wei =
+                                estimated_operation_cost_wei(&config, cycle_gas_price, operation);
+                            let estimated_operation_cost_eth =
+                                wei_to_eth_f64(estimated_operation_cost_wei);
+                            let requires_wallet_gas = !config.use_external_gas_sponsor;
+
+                            if requires_wallet_gas && native_balance < estimated_operation_cost_wei {
                                 continue;
                             }
 
                             let native_profit_wei = native_transferable_wei
-                                .saturating_sub(estimated_sweep_cost_wei);
+                                .saturating_sub(estimated_operation_cost_wei);
                             let native_profit_eth = wei_to_eth_f64(native_profit_wei);
                             let native_policy = policy_for_asset(&config, AssetClass::Native);
                             let native_min_profit_wei = policy_min_profit_wei(native_policy);
                             let native_roi_bps =
-                                compute_roi_bps(native_profit_eth, estimated_sweep_cost_eth);
+                                compute_roi_bps(native_profit_eth, estimated_operation_cost_eth);
 
                             if native_policy.enabled
                                 && native_profit_wei >= native_min_profit_wei
                                 && native_roi_bps >= native_policy.min_roi_bps
                             {
                                 info!(
-                                    "Residual candidate: wallet={:?} class={} native={:.6} ETH tokens={:.6} ETH total={:.6} ETH cost={:.6} ETH profit={:.6} ETH ROI={} bps",
+                                    "Residual candidate: wallet={:?} op={} class={} native={:.6} ETH tokens={:.6} ETH total={:.6} ETH cost={:.6} ETH profit={:.6} ETH ROI={} bps",
                                     wallet_addr,
+                                    operation.as_str(),
                                     AssetClass::Native.as_str(),
                                     native_balance_eth,
                                     0.0,
                                     wei_to_eth_f64(native_transferable_wei),
-                                    estimated_sweep_cost_eth,
+                                    estimated_operation_cost_eth,
                                     native_profit_eth,
                                     native_roi_bps
                                 );
 
                                 candidates.push(ResidualCandidate {
                                     wallet: wallet_addr,
+                                    operation,
                                     native_balance,
                                     token_value_wei: U256::zero(),
                                     stable_token_value_wei: U256::zero(),
                                     other_token_value_wei: U256::zero(),
                                     total_residual_wei: native_transferable_wei,
                                     estimated_net_profit_wei: native_profit_wei,
-                                    estimated_cost_wei: estimated_sweep_cost_wei,
+                                    estimated_cost_wei: estimated_operation_cost_wei,
                                     asset_class: AssetClass::Native.as_str().to_string(),
                                     rpc: endpoint.name.clone(),
                                     timestamp: std::time::Instant::now(),
@@ -389,7 +397,7 @@ pub async fn start_monitor(
                             let total_residual_wei = native_balance.saturating_add(token_value_wei);
                             let token_value_eth = wei_to_eth_f64(token_value_wei);
                             let estimated_net_profit_wei =
-                                total_residual_wei.saturating_sub(estimated_sweep_cost_wei);
+                                total_residual_wei.saturating_sub(estimated_operation_cost_wei);
                             let estimated_net_profit_eth = wei_to_eth_f64(estimated_net_profit_wei);
 
                             if token_value_eth > native_balance_eth * config.max_token_value_ratio {
@@ -408,20 +416,21 @@ pub async fn start_monitor(
                             let policy = policy_for_asset(&config, asset_class);
                             let min_net_profit_wei = policy_min_profit_wei(policy);
                             let roi_bps =
-                                compute_roi_bps(estimated_net_profit_eth, estimated_sweep_cost_eth);
+                                compute_roi_bps(estimated_net_profit_eth, estimated_operation_cost_eth);
                             if policy.enabled
                                 && estimated_net_profit_wei >= min_net_profit_wei
                                 && roi_bps >= policy.min_roi_bps
                             {
                                 candidates.push(ResidualCandidate {
                                     wallet: wallet_addr,
+                                    operation,
                                     native_balance,
                                     token_value_wei,
                                     stable_token_value_wei: token_portfolio.stable_wei,
                                     other_token_value_wei: token_portfolio.other_wei,
                                     total_residual_wei,
                                     estimated_net_profit_wei,
-                                    estimated_cost_wei: estimated_sweep_cost_wei,
+                                    estimated_cost_wei: estimated_operation_cost_wei,
                                     asset_class: asset_class.as_str().to_string(),
                                     rpc: endpoint.name.clone(),
                                     timestamp: std::time::Instant::now(),
@@ -444,24 +453,40 @@ pub async fn start_monitor(
                                     let native_balance_eth = wei_to_eth_f64(native_balance);
                                     let native_transferable_wei =
                                         native_balance.saturating_sub(min_native_reserve);
-                                    let requires_wallet_gas = !config.use_external_gas_sponsor;
 
                                     if native_transferable_wei.is_zero() {
                                         continue;
                                     }
 
-                                    if requires_wallet_gas && native_balance < estimated_sweep_cost_wei {
+                                    let operation = detect_wallet_operation(
+                                        endpoint.provider.clone(),
+                                        wallet_addr,
+                                        config.mock_contract_mode,
+                                    )
+                                    .await;
+                                    let estimated_operation_cost_wei = estimated_operation_cost_wei(
+                                        &config,
+                                        cycle_gas_price,
+                                        operation,
+                                    );
+                                    let estimated_operation_cost_eth =
+                                        wei_to_eth_f64(estimated_operation_cost_wei);
+                                    let requires_wallet_gas = !config.use_external_gas_sponsor;
+
+                                    if requires_wallet_gas
+                                        && native_balance < estimated_operation_cost_wei
+                                    {
                                         continue;
                                     }
 
                                     let native_profit_wei = native_transferable_wei
-                                        .saturating_sub(estimated_sweep_cost_wei);
+                                        .saturating_sub(estimated_operation_cost_wei);
                                     let native_profit_eth = wei_to_eth_f64(native_profit_wei);
                                     let native_policy = policy_for_asset(&config, AssetClass::Native);
                                     let native_min_profit_wei = policy_min_profit_wei(native_policy);
                                     let native_roi_bps = compute_roi_bps(
                                         native_profit_eth,
-                                        estimated_sweep_cost_eth,
+                                        estimated_operation_cost_eth,
                                     );
 
                                     if native_policy.enabled
@@ -470,13 +495,14 @@ pub async fn start_monitor(
                                     {
                                         candidates.push(ResidualCandidate {
                                             wallet: wallet_addr,
+                                            operation,
                                             native_balance,
                                             token_value_wei: U256::zero(),
                                             stable_token_value_wei: U256::zero(),
                                             other_token_value_wei: U256::zero(),
                                             total_residual_wei: native_transferable_wei,
                                             estimated_net_profit_wei: native_profit_wei,
-                                            estimated_cost_wei: estimated_sweep_cost_wei,
+                                            estimated_cost_wei: estimated_operation_cost_wei,
                                             asset_class: AssetClass::Native.as_str().to_string(),
                                             rpc: endpoint.name.clone(),
                                             timestamp: std::time::Instant::now(),
@@ -502,7 +528,8 @@ pub async fn start_monitor(
                                     let total_residual_wei =
                                         native_balance.saturating_add(token_value_wei);
                                     let estimated_net_profit_wei =
-                                        total_residual_wei.saturating_sub(estimated_sweep_cost_wei);
+                                        total_residual_wei
+                                            .saturating_sub(estimated_operation_cost_wei);
                                     let estimated_net_profit_eth =
                                         wei_to_eth_f64(estimated_net_profit_wei);
                                     let token_value_eth = wei_to_eth_f64(token_value_wei);
@@ -516,7 +543,7 @@ pub async fn start_monitor(
                                     let min_net_profit_wei = policy_min_profit_wei(policy);
                                     let roi_bps = compute_roi_bps(
                                         estimated_net_profit_eth,
-                                        estimated_sweep_cost_eth,
+                                        estimated_operation_cost_eth,
                                     );
 
                                     if policy.enabled
@@ -525,13 +552,14 @@ pub async fn start_monitor(
                                     {
                                         candidates.push(ResidualCandidate {
                                             wallet: wallet_addr,
+                                            operation,
                                             native_balance,
                                             token_value_wei,
                                             stable_token_value_wei: token_portfolio.stable_wei,
                                             other_token_value_wei: token_portfolio.other_wei,
                                             total_residual_wei,
                                             estimated_net_profit_wei,
-                                            estimated_cost_wei: estimated_sweep_cost_wei,
+                                            estimated_cost_wei: estimated_operation_cost_wei,
                                             asset_class: asset_class.as_str().to_string(),
                                             rpc: endpoint.name.clone(),
                                             timestamp: std::time::Instant::now(),
@@ -694,6 +722,42 @@ fn wei_to_eth_f64(wei: U256) -> f64 {
     eth_dec
 }
 
+async fn detect_wallet_operation(
+    provider: Arc<Provider<Http>>,
+    wallet_addr: Address,
+    mock_contract_mode: bool,
+) -> OperationType {
+    if mock_contract_mode {
+        return OperationType::Exec;
+    }
+
+    match provider.get_code(wallet_addr, None).await {
+        Ok(code) if code.as_ref().is_empty() => OperationType::Install,
+        Ok(_) => OperationType::Exec,
+        Err(_) => OperationType::Install,
+    }
+}
+
+fn estimated_total_gas_units(config: &Config, operation: OperationType) -> u64 {
+    match operation {
+        OperationType::Install => config
+            .estimated_install_gas
+            .saturating_add(config.estimated_exec_gas)
+            .saturating_add(config.estimated_bundle_overhead_gas),
+        OperationType::Exec => config
+            .estimated_exec_gas
+            .saturating_add(config.estimated_bundle_overhead_gas),
+    }
+}
+
+fn estimated_operation_cost_wei(
+    config: &Config,
+    gas_price: U256,
+    operation: OperationType,
+) -> U256 {
+    gas_price.saturating_mul(U256::from(estimated_total_gas_units(config, operation)))
+}
+
 fn queue_residual_candidate(
     wallet_states: &mut HashMap<Address, WalletExecutionState>,
     sweep_queue: &mut SweepQueue,
@@ -738,11 +802,17 @@ fn queue_residual_candidate(
     };
 
     info!(
-        "Queueing residual candidate: wallet={:?} class={} profit={:.6} ETH ROI={} bps via {}",
-        candidate.wallet, candidate.asset_class, profit_eth, roi_bps, candidate.rpc
+        "Queueing residual candidate: wallet={:?} op={} class={} profit={:.6} ETH ROI={} bps via {}",
+        candidate.wallet,
+        candidate.operation.as_str(),
+        candidate.asset_class,
+        profit_eth,
+        roi_bps,
+        candidate.rpc
     );
     let rpc = candidate.rpc.clone();
     let wallet = candidate.wallet;
+    let operation = candidate.operation;
     let asset_class = candidate.asset_class.clone();
     let total_residual_wei = candidate.total_residual_wei;
     let estimated_net_profit_wei = candidate.estimated_net_profit_wei;
@@ -767,8 +837,9 @@ fn queue_residual_candidate(
             dashboard.event(
                 "info",
                 format!(
-                    "residual candidate {:?} queued (profit={:.6} ETH ROI={} bps), queue size {}",
+                    "residual candidate {:?} op={} queued (profit={:.6} ETH ROI={} bps), queue size {}",
                     wallet,
+                    operation.as_str(),
                     profit_eth,
                     roi_bps,
                     sweep_queue.len()
@@ -853,8 +924,6 @@ async fn dispatch_ready_sweeps(
                 Err(_) => cycle_gas_price,
             }
         };
-    let final_cost_wei = final_gas_price.saturating_mul(U256::from(config.estimated_sweep_gas));
-
     while active_sweeps.len() < config.queue_workers.max(1) {
         let Some(job) = sweep_queue.pop() else {
             break;
@@ -862,6 +931,8 @@ async fn dispatch_ready_sweeps(
 
         let candidate = &job.candidate;
         let wallet_addr = candidate.wallet;
+        let final_cost_wei =
+            estimated_operation_cost_wei(config, final_gas_price, candidate.operation);
 
         dashboard.record_latency(
             "queue_wait",
@@ -882,8 +953,9 @@ async fn dispatch_ready_sweeps(
             dashboard.event(
                 "warn",
                 format!(
-                    "candidate {:?} no longer profitable (gas increased), skipping",
-                    wallet_addr
+                    "candidate {:?} op={} no longer profitable (gas increased), skipping",
+                    wallet_addr,
+                    candidate.operation.as_str()
                 ),
             );
             sweep_queue.finish(wallet_addr);
@@ -936,7 +1008,7 @@ async fn dispatch_ready_sweeps(
         let dashboard = dashboard.clone();
 
         active_sweeps.spawn(async move {
-            let result = extractor::sweep(
+            let result = extractor::execute_job(
                 wallet,
                 candidate,
                 config.contract,
