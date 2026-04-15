@@ -1,8 +1,8 @@
 use crate::cache::RuntimeCache;
 use crate::config::{BotMode, Config};
-use crate::contract::Simple7702Delegate;
+use crate::contract::{ERC20Token, Simple7702Delegate};
 use crate::dashboard::DashboardHandle;
-use crate::queue::{OperationType, ResidualCandidate};
+use crate::queue::{estimated_total_cost_wei, OperationType, ResidualCandidate};
 use crate::rpc::RpcFleet;
 use ethers::middleware::SignerMiddleware;
 use ethers::prelude::*;
@@ -24,22 +24,6 @@ fn sponsor_funding_wei(cost_wei: U256) -> U256 {
     cost_wei
         .saturating_add(cost_wei / U256::from(5u64))
         .saturating_add(U256::from(10_000_000_000_000u64))
-}
-
-fn estimated_total_gas_units(config: &Config, operation: OperationType) -> u64 {
-    match operation {
-        OperationType::Install => config
-            .estimated_install_gas
-            .saturating_add(config.estimated_exec_gas)
-            .saturating_add(config.estimated_bundle_overhead_gas),
-        OperationType::Exec => config
-            .estimated_exec_gas
-            .saturating_add(config.estimated_bundle_overhead_gas),
-    }
-}
-
-fn estimated_operation_cost_wei(config: &Config, gas_price: U256, operation: OperationType) -> U256 {
-    gas_price.saturating_mul(U256::from(estimated_total_gas_units(config, operation)))
 }
 
 pub async fn execute_job(
@@ -76,11 +60,8 @@ async fn execute_install_job(
     config: &Config,
     dashboard: DashboardHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let total_cost_wei = estimated_operation_cost_wei(
-        config,
-        U256::from(15_000_000_000u64),
-        candidate.operation,
-    );
+    let total_cost_wei =
+        estimated_total_cost_wei(config, U256::from(15_000_000_000u64), &candidate);
     let total_cost_eth = wei_to_eth_f64(total_cost_wei);
     let profit_eth = wei_to_eth_f64(candidate.estimated_net_profit_wei);
 
@@ -245,7 +226,7 @@ async fn execute_exec_job(
         (calldata, gas_price)
     };
 
-    let final_cost_wei = estimated_operation_cost_wei(config, gas_price, candidate.operation);
+    let final_cost_wei = estimated_total_cost_wei(config, gas_price, &candidate);
     let final_profit_wei = amount.saturating_sub(final_cost_wei);
     let final_profit_eth = wei_to_eth_f64(final_profit_wei);
     let min_profit_eth = candidate_min_profit_eth(config, &candidate.asset_class);
@@ -271,7 +252,7 @@ async fn execute_exec_job(
         );
     }
 
-    let tx: TypedTransaction = TransactionRequest::new()
+    let exec_tx: TypedTransaction = TransactionRequest::new()
         .to(contract_addr)
         .data(calldata)
         .value(amount)
@@ -364,8 +345,27 @@ async fn execute_exec_job(
         .sender_private_key
         .parse::<LocalWallet>()?
         .with_chain_id(config.chain_id);
-    let signature = wallet.sign_transaction(&tx).await?;
-    let signed_bundle_tx = tx.rlp_signed(&signature);
+    let mut signed_candidate_txs = Vec::new();
+
+    for token in &candidate.approval_tokens {
+        let approve_call = ERC20Token::new(*token, provider.clone()).approve(contract_addr, U256::MAX);
+        let approve_data = approve_call
+            .calldata()
+            .ok_or("failed to build approve calldata")?;
+        let approve_tx: TypedTransaction = TransactionRequest::new()
+            .to(*token)
+            .data(approve_data)
+            .value(U256::zero())
+            .gas(config.estimated_approve_gas)
+            .gas_price(gas_price)
+            .from(wallet.address())
+            .into();
+        let approve_signature = wallet.sign_transaction(&approve_tx).await?;
+        signed_candidate_txs.push(approve_tx.rlp_signed(&approve_signature));
+    }
+
+    let exec_signature = wallet.sign_transaction(&exec_tx).await?;
+    signed_candidate_txs.push(exec_tx.rlp_signed(&exec_signature));
     let sponsored_mode = config.use_external_gas_sponsor;
 
     let bundle = if sponsored_mode {
@@ -379,11 +379,17 @@ async fn execute_exec_job(
             .into();
         let sponsor_signature = sponsor_wallet.sign_transaction(&sponsor_tx).await?;
         let signed_sponsor_tx = sponsor_tx.rlp_signed(&sponsor_signature);
-        BundleRequest::new()
-            .push_transaction(signed_sponsor_tx)
-            .push_transaction(signed_bundle_tx)
+        let mut bundle = BundleRequest::new().push_transaction(signed_sponsor_tx);
+        for signed_tx in signed_candidate_txs {
+            bundle = bundle.push_transaction(signed_tx);
+        }
+        bundle
     } else {
-        BundleRequest::new().push_transaction(signed_bundle_tx)
+        let mut bundle = BundleRequest::new();
+        for signed_tx in signed_candidate_txs {
+            bundle = bundle.push_transaction(signed_tx);
+        }
+        bundle
     };
 
     let tx_signer = wallet.clone().with_chain_id(config.chain_id);
@@ -466,7 +472,7 @@ async fn execute_exec_job(
                 ),
             );
 
-            match public_client.send_transaction(tx, None).await {
+            match public_client.send_transaction(exec_tx, None).await {
                 Ok(pending_tx) => {
                     info!("fallback mempool tx sent: {:?}", pending_tx.tx_hash());
                     dashboard.mark_sweep_success_with_profit(
