@@ -29,5 +29,6 @@ abigen!(
     ERC20Token,
     r#"[
         function balanceOf(address owner) external view returns (uint256)
+        function approve(address spender, uint256 amount) external returns (bool)
     ]"#
 );
