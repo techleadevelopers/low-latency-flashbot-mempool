@@ -1,3 +1,4 @@
+mod benchmark;
 mod cache;
 mod config;
 mod contract;
@@ -10,6 +11,7 @@ mod storage;
 mod wallets;
 
 use cache::RuntimeCache;
+use benchmark::maybe_run_network_benchmark;
 use config::Config;
 use dashboard::DashboardHandle;
 use rpc::RpcFleet;
@@ -137,6 +139,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Storage: {}", config.storage_path.display());
     info!("RPC endpoints configured: {}", rpc_fleet.endpoint_count());
     info!("Dashboard: http://{}", config.dashboard_addr);
+
+    if maybe_run_network_benchmark(config.clone(), rpc_fleet.clone(), &wallets).await? {
+        return Ok(());
+    }
 
     let dashboard = DashboardHandle::new(
         &config,
