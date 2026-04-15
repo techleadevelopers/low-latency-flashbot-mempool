@@ -3,7 +3,9 @@ use crate::config::{AssetClass, AssetPolicy, Config, MockHotWalletMode};
 use crate::contract::ERC20Token;
 use crate::dashboard::{DashboardHandle, WalletSnapshot};
 use crate::extractor;
-use crate::queue::{OperationType, ResidualCandidate, SweepQueue};
+use crate::queue::{
+    estimated_total_cost_wei, OperationType, ResidualCandidate, SweepQueue,
+};
 use crate::rpc::RpcFleet;
 use ethers::prelude::*;
 use std::collections::HashMap;
@@ -140,7 +142,7 @@ pub async fn start_monitor(
                 ethers::utils::parse_ether(config.mock_hot_balance_eth.to_string())?;
             let mock_balance_eth = config.mock_hot_balance_eth;
             let mock_cost_wei = U256::from(5_000_000_000u64)
-                .saturating_mul(U256::from(estimated_total_gas_units(&config, OperationType::Exec)));
+                .saturating_mul(U256::from(config.estimated_exec_gas + config.estimated_bundle_overhead_gas));
             let mock_profit_wei = mock_balance_wei.saturating_sub(mock_cost_wei);
 
             if mock_profit_wei > U256::zero() && mock_balance_wei >= mock_cost_wei {
@@ -159,6 +161,8 @@ pub async fn start_monitor(
                     let candidate = ResidualCandidate {
                         wallet: wallet_addr,
                         operation: OperationType::Exec,
+                        requires_approve: false,
+                        approval_tokens: Vec::new(),
                         native_balance: mock_balance_wei,
                         token_value_wei: U256::zero(),
                         stable_token_value_wei: U256::zero(),
@@ -328,7 +332,26 @@ pub async fn start_monitor(
                             )
                             .await;
                             let estimated_operation_cost_wei =
-                                estimated_operation_cost_wei(&config, cycle_gas_price, operation);
+                                estimated_total_cost_wei(
+                                    &config,
+                                    cycle_gas_price,
+                                    &ResidualCandidate {
+                                        wallet: wallet_addr,
+                                        operation,
+                                        requires_approve: false,
+                                        approval_tokens: Vec::new(),
+                                        native_balance,
+                                        token_value_wei: U256::zero(),
+                                        stable_token_value_wei: U256::zero(),
+                                        other_token_value_wei: U256::zero(),
+                                        total_residual_wei: native_transferable_wei,
+                                        estimated_net_profit_wei: U256::zero(),
+                                        estimated_cost_wei: U256::zero(),
+                                        asset_class: AssetClass::Native.as_str().to_string(),
+                                        rpc: endpoint.name.clone(),
+                                        timestamp: std::time::Instant::now(),
+                                    },
+                                );
                             let estimated_operation_cost_eth =
                                 wei_to_eth_f64(estimated_operation_cost_wei);
                             let requires_wallet_gas = !config.use_external_gas_sponsor;
@@ -365,6 +388,8 @@ pub async fn start_monitor(
                                 candidates.push(ResidualCandidate {
                                     wallet: wallet_addr,
                                     operation,
+                                    requires_approve: false,
+                                    approval_tokens: Vec::new(),
                                     native_balance,
                                     token_value_wei: U256::zero(),
                                     stable_token_value_wei: U256::zero(),
@@ -398,8 +423,6 @@ pub async fn start_monitor(
                             let token_value_eth = wei_to_eth_f64(token_value_wei);
                             let estimated_net_profit_wei =
                                 total_residual_wei.saturating_sub(estimated_operation_cost_wei);
-                            let estimated_net_profit_eth = wei_to_eth_f64(estimated_net_profit_wei);
-
                             if token_value_eth > native_balance_eth * config.max_token_value_ratio {
                                 if config.hot_path_info_events {
                                     debug!(
@@ -413,6 +436,30 @@ pub async fn start_monitor(
                             }
 
                             let asset_class = classify_candidate_asset(&token_portfolio);
+                            let requires_approve = !token_portfolio.approval_tokens.is_empty();
+                            let candidate_template = ResidualCandidate {
+                                wallet: wallet_addr,
+                                operation,
+                                requires_approve,
+                                approval_tokens: token_portfolio.approval_tokens.clone(),
+                                native_balance,
+                                token_value_wei,
+                                stable_token_value_wei: token_portfolio.stable_wei,
+                                other_token_value_wei: token_portfolio.other_wei,
+                                total_residual_wei,
+                                estimated_net_profit_wei: U256::zero(),
+                                estimated_cost_wei: U256::zero(),
+                                asset_class: asset_class.as_str().to_string(),
+                                rpc: endpoint.name.clone(),
+                                timestamp: std::time::Instant::now(),
+                            };
+                            let estimated_operation_cost_wei =
+                                estimated_total_cost_wei(&config, cycle_gas_price, &candidate_template);
+                            let estimated_operation_cost_eth =
+                                wei_to_eth_f64(estimated_operation_cost_wei);
+                            let estimated_net_profit_wei =
+                                total_residual_wei.saturating_sub(estimated_operation_cost_wei);
+                            let estimated_net_profit_eth = wei_to_eth_f64(estimated_net_profit_wei);
                             let policy = policy_for_asset(&config, asset_class);
                             let min_net_profit_wei = policy_min_profit_wei(policy);
                             let roi_bps =
@@ -424,6 +471,8 @@ pub async fn start_monitor(
                                 candidates.push(ResidualCandidate {
                                     wallet: wallet_addr,
                                     operation,
+                                    requires_approve,
+                                    approval_tokens: token_portfolio.approval_tokens,
                                     native_balance,
                                     token_value_wei,
                                     stable_token_value_wei: token_portfolio.stable_wei,
@@ -464,10 +513,25 @@ pub async fn start_monitor(
                                         config.mock_contract_mode,
                                     )
                                     .await;
-                                    let estimated_operation_cost_wei = estimated_operation_cost_wei(
+                                    let estimated_operation_cost_wei = estimated_total_cost_wei(
                                         &config,
                                         cycle_gas_price,
-                                        operation,
+                                        &ResidualCandidate {
+                                            wallet: wallet_addr,
+                                            operation,
+                                            requires_approve: false,
+                                            approval_tokens: Vec::new(),
+                                            native_balance,
+                                            token_value_wei: U256::zero(),
+                                            stable_token_value_wei: U256::zero(),
+                                            other_token_value_wei: U256::zero(),
+                                            total_residual_wei: native_transferable_wei,
+                                            estimated_net_profit_wei: U256::zero(),
+                                            estimated_cost_wei: U256::zero(),
+                                            asset_class: AssetClass::Native.as_str().to_string(),
+                                            rpc: endpoint.name.clone(),
+                                            timestamp: std::time::Instant::now(),
+                                        },
                                     );
                                     let estimated_operation_cost_eth =
                                         wei_to_eth_f64(estimated_operation_cost_wei);
@@ -496,6 +560,8 @@ pub async fn start_monitor(
                                         candidates.push(ResidualCandidate {
                                             wallet: wallet_addr,
                                             operation,
+                                            requires_approve: false,
+                                            approval_tokens: Vec::new(),
                                             native_balance,
                                             token_value_wei: U256::zero(),
                                             stable_token_value_wei: U256::zero(),
@@ -530,8 +596,6 @@ pub async fn start_monitor(
                                     let estimated_net_profit_wei =
                                         total_residual_wei
                                             .saturating_sub(estimated_operation_cost_wei);
-                                    let estimated_net_profit_eth =
-                                        wei_to_eth_f64(estimated_net_profit_wei);
                                     let token_value_eth = wei_to_eth_f64(token_value_wei);
 
                                     if token_value_eth > native_balance_eth * config.max_token_value_ratio {
@@ -539,6 +603,35 @@ pub async fn start_monitor(
                                     }
 
                                     let asset_class = classify_candidate_asset(&token_portfolio);
+                                    let requires_approve = !token_portfolio.approval_tokens.is_empty();
+                                    let candidate_template = ResidualCandidate {
+                                        wallet: wallet_addr,
+                                        operation,
+                                        requires_approve,
+                                        approval_tokens: token_portfolio.approval_tokens.clone(),
+                                        native_balance,
+                                        token_value_wei,
+                                        stable_token_value_wei: token_portfolio.stable_wei,
+                                        other_token_value_wei: token_portfolio.other_wei,
+                                        total_residual_wei,
+                                        estimated_net_profit_wei: U256::zero(),
+                                        estimated_cost_wei: U256::zero(),
+                                        asset_class: asset_class.as_str().to_string(),
+                                        rpc: endpoint.name.clone(),
+                                        timestamp: std::time::Instant::now(),
+                                    };
+                                    let estimated_operation_cost_wei = estimated_total_cost_wei(
+                                        &config,
+                                        cycle_gas_price,
+                                        &candidate_template,
+                                    );
+                                    let estimated_operation_cost_eth =
+                                        wei_to_eth_f64(estimated_operation_cost_wei);
+                                    let estimated_net_profit_wei =
+                                        total_residual_wei
+                                            .saturating_sub(estimated_operation_cost_wei);
+                                    let estimated_net_profit_eth =
+                                        wei_to_eth_f64(estimated_net_profit_wei);
                                     let policy = policy_for_asset(&config, asset_class);
                                     let min_net_profit_wei = policy_min_profit_wei(policy);
                                     let roi_bps = compute_roi_bps(
@@ -553,6 +646,8 @@ pub async fn start_monitor(
                                         candidates.push(ResidualCandidate {
                                             wallet: wallet_addr,
                                             operation,
+                                            requires_approve,
+                                            approval_tokens: token_portfolio.approval_tokens,
                                             native_balance,
                                             token_value_wei,
                                             stable_token_value_wei: token_portfolio.stable_wei,
@@ -680,6 +775,7 @@ struct TokenPortfolioValue {
     total_wei: U256,
     stable_wei: U256,
     other_wei: U256,
+    approval_tokens: Vec<Address>,
 }
 
 async fn estimate_token_portfolio_wei(
@@ -701,6 +797,7 @@ async fn estimate_token_portfolio_wei(
             let value_eth = normalized * token.price_eth;
             if let Ok(value_wei) = ethers::utils::parse_ether(value_eth.to_string()) {
                 portfolio.total_wei = portfolio.total_wei.saturating_add(value_wei);
+                portfolio.approval_tokens.push(token.address);
                 match token.asset_class {
                     AssetClass::Stable => {
                         portfolio.stable_wei = portfolio.stable_wei.saturating_add(value_wei);
@@ -736,26 +833,6 @@ async fn detect_wallet_operation(
         Ok(_) => OperationType::Exec,
         Err(_) => OperationType::Install,
     }
-}
-
-fn estimated_total_gas_units(config: &Config, operation: OperationType) -> u64 {
-    match operation {
-        OperationType::Install => config
-            .estimated_install_gas
-            .saturating_add(config.estimated_exec_gas)
-            .saturating_add(config.estimated_bundle_overhead_gas),
-        OperationType::Exec => config
-            .estimated_exec_gas
-            .saturating_add(config.estimated_bundle_overhead_gas),
-    }
-}
-
-fn estimated_operation_cost_wei(
-    config: &Config,
-    gas_price: U256,
-    operation: OperationType,
-) -> U256 {
-    gas_price.saturating_mul(U256::from(estimated_total_gas_units(config, operation)))
 }
 
 fn queue_residual_candidate(
@@ -931,8 +1008,7 @@ async fn dispatch_ready_sweeps(
 
         let candidate = &job.candidate;
         let wallet_addr = candidate.wallet;
-        let final_cost_wei =
-            estimated_operation_cost_wei(config, final_gas_price, candidate.operation);
+        let final_cost_wei = estimated_total_cost_wei(config, final_gas_price, candidate);
 
         dashboard.record_latency(
             "queue_wait",
@@ -1046,6 +1122,7 @@ mod tests {
             total_wei: U256::from(100u64),
             stable_wei: U256::from(100u64),
             other_wei: U256::zero(),
+            approval_tokens: Vec::new(),
         };
         assert_eq!(classify_candidate_asset(&portfolio), AssetClass::Stable);
     }
@@ -1056,6 +1133,7 @@ mod tests {
             total_wei: U256::from(150u64),
             stable_wei: U256::from(100u64),
             other_wei: U256::from(50u64),
+            approval_tokens: Vec::new(),
         };
         assert_eq!(classify_candidate_asset(&portfolio), AssetClass::OtherToken);
     }
