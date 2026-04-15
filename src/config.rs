@@ -64,6 +64,8 @@ pub struct Config {
     pub rpc_stale_threshold_secs: u64,
     pub rpc_rate_limit_cooldown_secs: u64,
     pub max_infura_endpoints: usize,
+    pub rpc_read_preference: RpcPreference,
+    pub rpc_send_preference: RpcPreference,
     pub contract_cache_ttl_secs: u64,
     pub gas_price_cache_ttl_secs: u64,
     pub storage_path: PathBuf,
@@ -126,11 +128,28 @@ pub enum MockHotWalletMode {
     Continuous,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RpcPreference {
+    Auto,
+    Alchemy,
+    Infura,
+}
+
 impl MockHotWalletMode {
     pub fn as_str(self) -> &'static str {
         match self {
             MockHotWalletMode::OneShot => "oneshot",
             MockHotWalletMode::Continuous => "continuous",
+        }
+    }
+}
+
+impl RpcPreference {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RpcPreference::Auto => "auto",
+            RpcPreference::Alchemy => "alchemy",
+            RpcPreference::Infura => "infura",
         }
     }
 }
@@ -279,6 +298,16 @@ impl Config {
         let max_infura_endpoints = env::var("MAX_INFURA_ENDPOINTS")
             .unwrap_or_else(|_| "2".to_string())
             .parse::<usize>()?;
+        let rpc_read_preference = parse_rpc_preference(
+            env::var("RPC_READ_PREFERENCE")
+                .unwrap_or_else(|_| "auto".to_string())
+                .trim(),
+        )?;
+        let rpc_send_preference = parse_rpc_preference(
+            env::var("RPC_SEND_PREFERENCE")
+                .unwrap_or_else(|_| "auto".to_string())
+                .trim(),
+        )?;
         let contract_cache_ttl_secs = env::var("CONTRACT_CACHE_TTL_SECS")
             .unwrap_or_else(|_| "15".to_string())
             .parse::<u64>()?;
@@ -427,6 +456,8 @@ impl Config {
             rpc_stale_threshold_secs,
             rpc_rate_limit_cooldown_secs,
             max_infura_endpoints,
+            rpc_read_preference,
+            rpc_send_preference,
             contract_cache_ttl_secs,
             gas_price_cache_ttl_secs,
             storage_path,
@@ -488,6 +519,11 @@ impl Config {
         );
         println!("Enable Token Sweep: {}", self.enable_token_sweep);
         println!("Max Token/Value Ratio: {}", self.max_token_value_ratio);
+        println!(
+            "RPC preference read/send: {}/{}",
+            self.rpc_read_preference.as_str(),
+            self.rpc_send_preference.as_str()
+        );
         println!(
             "Policies: native(min_profit={} roi={} enabled={}) stable(min_profit={} roi={} enabled={}) other(min_profit={} roi={} enabled={})",
             self.native_policy.min_net_profit_eth,
@@ -618,6 +654,15 @@ fn parse_mock_hot_wallet_mode(
         "oneshot" => Ok(MockHotWalletMode::OneShot),
         "continuous" => Ok(MockHotWalletMode::Continuous),
         other => Err(format!("unsupported MOCK_HOT_WALLET_MODE: {other}").into()),
+    }
+}
+
+fn parse_rpc_preference(value: &str) -> Result<RpcPreference, Box<dyn std::error::Error>> {
+    match value.trim().to_lowercase().as_str() {
+        "auto" => Ok(RpcPreference::Auto),
+        "alchemy" => Ok(RpcPreference::Alchemy),
+        "infura" => Ok(RpcPreference::Infura),
+        other => Err(format!("unsupported RPC preference: {other}").into()),
     }
 }
 
