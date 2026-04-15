@@ -103,3 +103,27 @@ DISABLE_PUBLIC_FALLBACK=true
 ```
 
 Depois ajustar conforme ruido real, custo medio de gas e tamanho dos residuos.
+
+## Teste de velocidade
+
+Existe um benchmark manual da fila em `src/queue.rs`.
+
+Rodar com carga padrao:
+
+```bash
+cargo test benchmark_queue_throughput_for_large_bursts -- --ignored --nocapture
+```
+
+Ajustar carga e limite esperado:
+
+```bash
+QUEUE_BENCH_ROUNDS=5000 QUEUE_BENCH_WALLETS=400 QUEUE_BENCH_MAX_MS=8000 cargo test benchmark_queue_throughput_for_large_bursts -- --ignored --nocapture
+```
+
+O teste imprime:
+
+- `total_jobs`
+- `elapsed_ms`
+- `jobs_per_sec`
+
+Se `elapsed_ms` passar do limite configurado em `QUEUE_BENCH_MAX_MS`, o teste falha.
