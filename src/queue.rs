@@ -3,9 +3,25 @@ use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OperationType {
+    Install,
+    Exec,
+}
+
+impl OperationType {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            OperationType::Install => "install",
+            OperationType::Exec => "exec",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ResidualCandidate {
     pub wallet: Address,
+    pub operation: OperationType,
     pub native_balance: U256,
     pub token_value_wei: U256,
     pub stable_token_value_wei: U256,
@@ -40,30 +56,31 @@ impl ResidualCandidate {
 }
 
 #[derive(Debug, Clone)]
-pub struct PrioritizedSweepJob {
+pub struct PrioritizedJob {
     pub candidate: ResidualCandidate,
     pub rpc: String,
     pub enqueued_at: Instant,
     sequence: u64,
 }
 
-impl PartialEq for PrioritizedSweepJob {
+impl PartialEq for PrioritizedJob {
     fn eq(&self, other: &Self) -> bool {
         self.candidate.wallet == other.candidate.wallet
+            && self.candidate.operation == other.candidate.operation
             && self.sequence == other.sequence
             && self.rpc == other.rpc
     }
 }
 
-impl Eq for PrioritizedSweepJob {}
+impl Eq for PrioritizedJob {}
 
-impl PartialOrd for PrioritizedSweepJob {
+impl PartialOrd for PrioritizedJob {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for PrioritizedSweepJob {
+impl Ord for PrioritizedJob {
     fn cmp(&self, other: &Self) -> Ordering {
         self.candidate
             .estimated_net_profit_wei
@@ -73,12 +90,12 @@ impl Ord for PrioritizedSweepJob {
     }
 }
 
-pub type SweepJob = PrioritizedSweepJob;
+pub type Job = PrioritizedJob;
 
 pub struct SweepQueue {
-    heap: BinaryHeap<PrioritizedSweepJob>,
+    heap: BinaryHeap<PrioritizedJob>,
     active_wallets: HashSet<Address>,
-    last_enqueued_at: HashMap<Address, Instant>,
+    last_enqueued_at: HashMap<(Address, OperationType), Instant>,
     dedupe_window: Duration,
     sequence: u64,
 }
@@ -104,15 +121,16 @@ impl SweepQueue {
         }
 
         let now = Instant::now();
-        if let Some(last_enqueued_at) = self.last_enqueued_at.get(&candidate.wallet) {
+        let dedupe_key = (candidate.wallet, candidate.operation);
+        if let Some(last_enqueued_at) = self.last_enqueued_at.get(&dedupe_key) {
             if now.saturating_duration_since(*last_enqueued_at) < self.dedupe_window {
                 return false;
             }
         }
 
         self.sequence = self.sequence.saturating_add(1);
-        self.last_enqueued_at.insert(candidate.wallet, now);
-        self.heap.push(PrioritizedSweepJob {
+        self.last_enqueued_at.insert(dedupe_key, now);
+        self.heap.push(PrioritizedJob {
             candidate,
             rpc,
             enqueued_at: now,
@@ -121,7 +139,7 @@ impl SweepQueue {
         true
     }
 
-    pub fn pop(&mut self) -> Option<SweepJob> {
+    pub fn pop(&mut self) -> Option<Job> {
         let job = self.heap.pop()?;
         self.active_wallets.insert(job.candidate.wallet);
         Some(job)
@@ -149,6 +167,7 @@ mod tests {
     fn candidate(wallet_idx: u64, profit_wei: u64, cost_wei: u64) -> ResidualCandidate {
         ResidualCandidate {
             wallet: Address::from_low_u64_be(wallet_idx),
+            operation: OperationType::Exec,
             native_balance: U256::from(profit_wei + cost_wei),
             token_value_wei: U256::zero(),
             stable_token_value_wei: U256::zero(),
