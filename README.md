@@ -127,3 +127,39 @@ O teste imprime:
 - `jobs_per_sec`
 
 Se `elapsed_ms` passar do limite configurado em `QUEUE_BENCH_MAX_MS`, o teste falha.
+
+## Benchmark de rede
+
+Para medir os gargalos reais de RPC e relay sem entrar no loop do monitor:
+
+```bash
+RUN_NETWORK_BENCHMARK=true cargo run -- --network ethereum
+```
+
+O benchmark mede por endpoint:
+
+- `get_block_number`
+- `get_gas_price`
+- `get_balances_batch`
+- `get_transaction_count`
+
+Saida:
+
+- `avg`
+- `p50`
+- `p95`
+- contagem de erros
+
+Ajustes:
+
+```bash
+RUN_NETWORK_BENCHMARK=true NETWORK_BENCHMARK_SAMPLES=20 NETWORK_BENCHMARK_WALLETS=40 cargo run -- --network ethereum
+```
+
+Probe opcional do relay Flashbots:
+
+```bash
+RUN_NETWORK_BENCHMARK=true NETWORK_BENCHMARK_BUNDLE=true NETWORK_BENCHMARK_BUNDLE_SAMPLES=3 cargo run -- --network ethereum
+```
+
+Esse probe de `send_bundle` fica desligado por padrao porque envia um bundle real ao relay para medir round-trip.
