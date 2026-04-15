@@ -134,6 +134,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         config.rpc_rate_limit_cooldown_secs
     );
     info!("Max Infura endpoints: {}", config.max_infura_endpoints);
+    info!(
+        "RPC preference read/send: {}/{}",
+        config.rpc_read_preference.as_str(),
+        config.rpc_send_preference.as_str()
+    );
     info!("Contract cache TTL: {} s", config.contract_cache_ttl_secs);
     info!("Gas price cache TTL: {} s", config.gas_price_cache_ttl_secs);
     info!("Storage: {}", config.storage_path.display());
