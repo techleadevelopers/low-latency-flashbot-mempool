@@ -163,6 +163,7 @@ fn wei_to_eth_f64(wei: U256) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
 
     fn candidate(wallet_idx: u64, profit_wei: u64, cost_wei: u64) -> ResidualCandidate {
         ResidualCandidate {
@@ -291,6 +292,74 @@ mod tests {
             rounds,
             wallets_per_round,
             elapsed.as_millis()
+        );
+    }
+
+    #[test]
+    #[ignore = "manual local benchmark for queue throughput"]
+    fn benchmark_queue_throughput_for_large_bursts() {
+        let rounds = env::var("QUEUE_BENCH_ROUNDS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(2_000);
+        let wallets_per_round = env::var("QUEUE_BENCH_WALLETS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(250);
+        let max_elapsed_ms = env::var("QUEUE_BENCH_MAX_MS")
+            .ok()
+            .and_then(|value| value.parse::<u128>().ok())
+            .unwrap_or(12_000);
+
+        let started = Instant::now();
+        let mut total_jobs = 0u64;
+
+        for round in 0..rounds {
+            let mut queue = SweepQueue::new(Duration::from_millis(0));
+
+            for wallet_idx in 1..=wallets_per_round {
+                let unique_wallet = round * wallets_per_round + wallet_idx;
+                let candidate = candidate(
+                    unique_wallet,
+                    100_000 + (wallet_idx % 10_000),
+                    100 + (wallet_idx % 50),
+                );
+                assert!(queue.enqueue_prioritized(candidate.clone(), candidate.rpc.clone()));
+                total_jobs += 1;
+            }
+
+            let mut popped = 0u64;
+            while let Some(job) = queue.pop() {
+                popped += 1;
+                queue.finish(job.candidate.wallet);
+            }
+
+            assert_eq!(popped, wallets_per_round);
+        }
+
+        let elapsed = started.elapsed();
+        let elapsed_ms = elapsed.as_millis();
+        let jobs_per_sec = if elapsed.as_secs_f64() > 0.0 {
+            total_jobs as f64 / elapsed.as_secs_f64()
+        } else {
+            0.0
+        };
+
+        eprintln!(
+            "queue_benchmark rounds={} wallets_per_round={} total_jobs={} elapsed_ms={} jobs_per_sec={:.2}",
+            rounds,
+            wallets_per_round,
+            total_jobs,
+            elapsed_ms,
+            jobs_per_sec
+        );
+
+        assert!(
+            elapsed_ms <= max_elapsed_ms,
+            "queue benchmark too slow: {} ms > {} ms (jobs_per_sec={:.2})",
+            elapsed_ms,
+            max_elapsed_ms,
+            jobs_per_sec
         );
     }
 }
