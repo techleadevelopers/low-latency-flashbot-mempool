@@ -287,8 +287,10 @@ pub async fn sweep(
     let signature = wallet.sign_transaction(&tx).await?;
     let signed_bundle_tx = tx.rlp_signed(&signature);
     let sponsored_mode = config.use_external_gas_sponsor;
-    let sponsor_funding = sponsor_funding_wei(final_cost_wei);
-    let signed_sponsor_tx = if sponsored_mode {
+
+    // Build bundle: sponsor -> sweep (no approve)
+    let bundle = if sponsored_mode {
+        let sponsor_funding = sponsor_funding_wei(final_cost_wei);
         let sponsor_tx: TypedTransaction = TransactionRequest::new()
             .to(wallet.address())
             .value(sponsor_funding)
@@ -297,9 +299,12 @@ pub async fn sweep(
             .from(sponsor_wallet.address())
             .into();
         let sponsor_signature = sponsor_wallet.sign_transaction(&sponsor_tx).await?;
-        Some(sponsor_tx.rlp_signed(&sponsor_signature))
+        let signed_sponsor_tx = sponsor_tx.rlp_signed(&sponsor_signature);
+        BundleRequest::new()
+            .push_transaction(signed_sponsor_tx)
+            .push_transaction(signed_bundle_tx)
     } else {
-        None
+        BundleRequest::new().push_transaction(signed_bundle_tx)
     };
 
     let tx_signer = wallet.clone().with_chain_id(config.chain_id);
@@ -309,13 +314,6 @@ pub async fn sweep(
     let relay_url = Url::parse(&config.flashbots_relay)?;
     let flashbots = FlashbotsMiddleware::new(flashbots_client, relay_url, relay_signer);
 
-    let bundle = if let Some(signed_sponsor_tx) = signed_sponsor_tx {
-        BundleRequest::new()
-            .push_transaction(signed_sponsor_tx)
-            .push_transaction(signed_bundle_tx)
-    } else {
-        BundleRequest::new().push_transaction(signed_bundle_tx)
-    };
     let bundle_started = std::time::Instant::now();
     let bundle_result = flashbots.send_bundle(&bundle).await;
     dashboard.record_latency(
@@ -342,7 +340,7 @@ pub async fn sweep(
                     if sponsored_mode {
                         format!(
                             " | sponsored_gas={:.6} ETH",
-                            wei_to_eth_f64(sponsor_funding)
+                            wei_to_eth_f64(sponsor_funding_wei(final_cost_wei))
                         )
                     } else {
                         String::new()
