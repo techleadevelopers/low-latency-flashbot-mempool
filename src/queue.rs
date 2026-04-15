@@ -16,6 +16,7 @@ pub struct ResidualCandidate {
     pub asset_class: String,
     pub rpc: String,
     pub timestamp: Instant,
+    // token_address REMOVIDO - não é usado pelo contrato Simple7702Delegate
 }
 
 impl ResidualCandidate {
@@ -158,6 +159,7 @@ mod tests {
             asset_class: "native".to_string(),
             rpc: "test-rpc".to_string(),
             timestamp: Instant::now(),
+            // token_address removido
         }
     }
 
