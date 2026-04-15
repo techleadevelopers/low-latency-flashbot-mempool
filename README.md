@@ -143,6 +143,11 @@ O benchmark mede por endpoint:
 - `get_balances_batch`
 - `get_transaction_count`
 
+Preferencia de rota em producao:
+
+- `RPC_READ_PREFERENCE=auto|alchemy|infura`
+- `RPC_SEND_PREFERENCE=auto|alchemy|infura`
+
 Saida:
 
 - `avg`
