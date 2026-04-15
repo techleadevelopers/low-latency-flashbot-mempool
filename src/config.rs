@@ -47,6 +47,7 @@ pub struct Config {
     pub min_net_profit_eth: f64, // AGORA: lucro mínimo para executar sweep
     pub estimated_sweep_gas: u64,
     pub estimated_install_gas: u64,
+    pub estimated_approve_gas: u64,
     pub estimated_exec_gas: u64,
     pub estimated_bundle_overhead_gas: u64,
     pub profit_margin_bps: u64, // DEPRECATED: será ignorado na nova lógica
@@ -244,6 +245,9 @@ impl Config {
         let estimated_install_gas = env::var("ESTIMATED_INSTALL_GAS")
             .unwrap_or_else(|_| "180000".to_string())
             .parse::<u64>()?;
+        let estimated_approve_gas = env::var("ESTIMATED_APPROVE_GAS")
+            .unwrap_or_else(|_| "65000".to_string())
+            .parse::<u64>()?;
         let estimated_exec_gas = env::var("ESTIMATED_EXEC_GAS")
             .ok()
             .map(|value| value.trim().parse::<u64>())
@@ -439,6 +443,7 @@ impl Config {
             min_net_profit_eth,
             estimated_sweep_gas,
             estimated_install_gas,
+            estimated_approve_gas,
             estimated_exec_gas,
             estimated_bundle_overhead_gas,
             profit_margin_bps,
@@ -506,8 +511,9 @@ impl Config {
         println!("Min Balance (safety reserve): {} ETH", self.min_balance);
         println!("Min Net Profit: {} ETH", self.min_net_profit_eth);
         println!(
-            "Estimated Gas: install={} exec={} bundle_overhead={} legacy_sweep={}",
+            "Estimated Gas: install={} approve={} exec={} bundle_overhead={} legacy_sweep={}",
             self.estimated_install_gas,
+            self.estimated_approve_gas,
             self.estimated_exec_gas,
             self.estimated_bundle_overhead_gas,
             self.estimated_sweep_gas
