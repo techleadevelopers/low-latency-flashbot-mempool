@@ -4,9 +4,15 @@ use ethers::prelude::abigen;
 abigen!(
     Simple7702Delegate,
     r#"[
+        function owner() external view returns (address)
         function sweepNative() external
         function sweepTokens(address[] calldata tokens) external
         function sweepAll(address[] calldata tokens) external
+        function delegateSweepNative(address dest) external payable
+        function delegateSweepTokens(address dest, address[] calldata tokens) external payable
+        function delegateSweepAll(address dest, address[] calldata tokens) external payable
+        function sweepTokensFrom(address from, address[] calldata tokens) external
+        function sweepAllFrom(address from, address[] calldata tokens) external
         function sweepArbitrum() external
         function sweepBSC() external
         function setDestination(address _dest) external
@@ -19,6 +25,7 @@ abigen!(
         function getBscTokens() external view returns (address[] memory)
         function getNativeBalance() external view returns (uint256)
         function getTokenBalance(address token) external view returns (uint256)
+        function getTokenAllowance(address token, address tokenOwner) external view returns (uint256)
         function destination() external view returns (address)
         function frozen() external view returns (bool)
         function OWNER() external view returns (address)
