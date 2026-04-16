@@ -81,6 +81,10 @@ pub struct Config {
     pub native_policy: AssetPolicy,
     pub stable_policy: AssetPolicy,
     pub other_token_policy: AssetPolicy,
+    pub enable_mempool_monitor: bool,
+    pub mempool_ws_url: Option<String>,
+    pub frontrun_slippage_bps: u64,
+    pub frontrun_gas_bump_bps: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -407,6 +411,20 @@ impl Config {
                 .trim()
                 .eq_ignore_ascii_case("true"),
         };
+        let enable_mempool_monitor = env::var("ENABLE_MEMPOOL_MONITOR")
+            .unwrap_or_else(|_| "false".to_string())
+            .trim()
+            .eq_ignore_ascii_case("true");
+        let mempool_ws_url = env::var("MEMPOOL_WS_URL")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+        let frontrun_slippage_bps = env::var("FRONTRUN_SLIPPAGE_BPS")
+            .unwrap_or_else(|_| "100".to_string())
+            .parse::<u64>()?;
+        let frontrun_gas_bump_bps = env::var("FRONTRUN_GAS_BUMP_BPS")
+            .unwrap_or_else(|_| "11000".to_string())
+            .parse::<u64>()?;
 
         let mut infura_ids = Vec::new();
         for idx in 1..=10 {
@@ -477,6 +495,10 @@ impl Config {
             native_policy,
             stable_policy,
             other_token_policy,
+            enable_mempool_monitor,
+            mempool_ws_url,
+            frontrun_slippage_bps,
+            frontrun_gas_bump_bps,
         })
     }
 
@@ -543,7 +565,16 @@ impl Config {
             self.other_token_policy.enabled
         );
         println!("Monitored Tokens: {}", self.monitored_tokens.len());
+        println!("Mempool Monitor: {}", self.enable_mempool_monitor);
+        println!("Frontrun slippage bps: {}", self.frontrun_slippage_bps);
+        println!("Frontrun gas bump bps: {}", self.frontrun_gas_bump_bps);
         println!("===============================================");
+    }
+
+    pub fn mempool_ws_url(&self) -> Option<String> {
+        self.mempool_ws_url
+            .clone()
+            .or_else(|| alchemy_ws_url_for_network(&self.network, &self.alchemy_key))
     }
 }
 
@@ -631,6 +662,15 @@ fn alchemy_url_for_network(network: &str, key: &str) -> Option<String> {
         "ethereum" => Some(format!("https://eth-mainnet.g.alchemy.com/v2/{key}")),
         "arbitrum" => Some(format!("https://arb-mainnet.g.alchemy.com/v2/{key}")),
         "polygon" => Some(format!("https://polygon-mainnet.g.alchemy.com/v2/{key}")),
+        _ => None,
+    }
+}
+
+fn alchemy_ws_url_for_network(network: &str, key: &str) -> Option<String> {
+    match network {
+        "ethereum" => Some(format!("wss://eth-mainnet.g.alchemy.com/v2/{key}")),
+        "arbitrum" => Some(format!("wss://arb-mainnet.g.alchemy.com/v2/{key}")),
+        "polygon" => Some(format!("wss://polygon-mainnet.g.alchemy.com/v2/{key}")),
         _ => None,
     }
 }
