@@ -28,6 +28,33 @@ Condicoes adicionais:
 - o destino da tesouraria precisa bater com o `forwarder`
 - a politica do ativo precisa permitir
 
+## Modo Spender
+
+O contrato tambem suporta fluxo de spender para ERC-20:
+
+- a wallet alvo aprova o contrato
+- a wallet operacional faz sponsor funding do gas
+- a wallet operacional chama `sweepAllFrom(wallet_alvo, tokens)`
+- o contrato puxa os tokens com `transferFrom`
+
+Relacao correta entre chaves e contrato:
+
+- `SENDER_PRIVATE_KEY`: EOA que deve ser `owner()` do contrato e que assina a tx final de `sweepAllFrom(...)`
+- `CONTROL_ADDRESS`: destino final dos fundos
+- `USE_EXTERNAL_GAS_SPONSOR=true`: habilita sponsor funding no bundle
+
+Ordem do bundle nesse modo:
+
+1. sponsor funding
+2. approve da wallet alvo
+3. `sweepAllFrom(wallet_alvo, tokens)`
+
+Limitacao:
+
+- esse fluxo cobre ERC-20 aprovavel
+- nativo da wallet alvo nao entra por `transferFrom`
+- para nativo, precisa de outro caminho como delegate/7702
+
 ## Politica por ativo
 
 O projeto diferencia tres classes:
@@ -168,3 +195,29 @@ RUN_NETWORK_BENCHMARK=true NETWORK_BENCHMARK_BUNDLE=true NETWORK_BENCHMARK_BUNDL
 ```
 
 Esse probe de `send_bundle` fica desligado por padrao porque envia um bundle real ao relay para medir round-trip.
+
+## Monitor de mempool
+
+Existe um monitor opcional de pending transactions via WebSocket para acionar a trilha de front-run.
+
+Flags:
+
+```env
+ENABLE_MEMPOOL_MONITOR=true
+MEMPOOL_WS_URL=wss://eth-mainnet.g.alchemy.com/v2/SEU_ALCHEMY_KEY
+FRONTRUN_SLIPPAGE_BPS=100
+FRONTRUN_GAS_BUMP_BPS=11000
+```
+
+Comportamento atual:
+
+- assina monitoramento de `pending_txs`
+- filtra por selectors de swap suportados
+- decodifica swaps `swapExactTokensForTokens`, `swapExactETHForTokens` e `swapExactTokensForETH`
+- envia bundle Flashbots real quando encontra oportunidade suportada
+
+Limitacao atual:
+
+- o envio efetivo atual fica restrito a `swapExactETHForTokens`
+- swaps com input ERC-20 ainda exigem saldo e approvals dedicados do bot
+- nao existe heuristica de lucro on-chain acoplada nessa trilha generica
