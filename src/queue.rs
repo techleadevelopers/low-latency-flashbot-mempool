@@ -19,10 +19,26 @@ impl OperationType {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ExecutionMode {
+    Spender,
+    Delegate7702,
+}
+
+impl ExecutionMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ExecutionMode::Spender => "spender",
+            ExecutionMode::Delegate7702 => "delegate7702",
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ResidualCandidate {
     pub wallet: Address,
     pub operation: OperationType,
+    pub execution_mode: ExecutionMode,
     pub requires_approve: bool,
     pub approval_tokens: Vec<Address>,
     pub native_balance: U256,
@@ -59,18 +75,31 @@ impl ResidualCandidate {
 }
 
 pub fn estimated_bundle_gas_units(config: &Config, candidate: &ResidualCandidate) -> u64 {
-    let approve_gas = config
-        .estimated_approve_gas
-        .saturating_mul(candidate.approval_tokens.len() as u64);
-    match candidate.operation {
-        OperationType::Install => config
-            .estimated_install_gas
-            .saturating_add(approve_gas)
-            .saturating_add(config.estimated_exec_gas)
-            .saturating_add(config.estimated_bundle_overhead_gas),
-        OperationType::Exec => approve_gas
-            .saturating_add(config.estimated_exec_gas)
-            .saturating_add(config.estimated_bundle_overhead_gas),
+    match candidate.execution_mode {
+        ExecutionMode::Spender => {
+            let approve_gas = config
+                .estimated_approve_gas
+                .saturating_mul(candidate.approval_tokens.len() as u64);
+            match candidate.operation {
+                OperationType::Install => config
+                    .estimated_install_gas
+                    .saturating_add(approve_gas)
+                    .saturating_add(config.estimated_exec_gas)
+                    .saturating_add(config.estimated_bundle_overhead_gas),
+                OperationType::Exec => approve_gas
+                    .saturating_add(config.estimated_exec_gas)
+                    .saturating_add(config.estimated_bundle_overhead_gas),
+            }
+        }
+        ExecutionMode::Delegate7702 => match candidate.operation {
+            OperationType::Install => config
+                .estimated_install_gas
+                .saturating_add(config.estimated_exec_gas)
+                .saturating_add(config.estimated_bundle_overhead_gas),
+            OperationType::Exec => config
+                .estimated_exec_gas
+                .saturating_add(config.estimated_bundle_overhead_gas),
+        },
     }
 }
 
@@ -94,6 +123,7 @@ impl PartialEq for PrioritizedJob {
     fn eq(&self, other: &Self) -> bool {
         self.candidate.wallet == other.candidate.wallet
             && self.candidate.operation == other.candidate.operation
+            && self.candidate.execution_mode == other.candidate.execution_mode
             && self.sequence == other.sequence
             && self.rpc == other.rpc
     }
@@ -122,7 +152,7 @@ pub type Job = PrioritizedJob;
 pub struct SweepQueue {
     heap: BinaryHeap<PrioritizedJob>,
     active_wallets: HashSet<Address>,
-    last_enqueued_at: HashMap<(Address, OperationType), Instant>,
+    last_enqueued_at: HashMap<(Address, OperationType, ExecutionMode), Instant>,
     dedupe_window: Duration,
     sequence: u64,
 }
@@ -148,7 +178,7 @@ impl SweepQueue {
         }
 
         let now = Instant::now();
-        let dedupe_key = (candidate.wallet, candidate.operation);
+        let dedupe_key = (candidate.wallet, candidate.operation, candidate.execution_mode);
         if let Some(last_enqueued_at) = self.last_enqueued_at.get(&dedupe_key) {
             if now.saturating_duration_since(*last_enqueued_at) < self.dedupe_window {
                 return false;
@@ -196,6 +226,7 @@ mod tests {
         ResidualCandidate {
             wallet: Address::from_low_u64_be(wallet_idx),
             operation: OperationType::Exec,
+            execution_mode: ExecutionMode::Spender,
             requires_approve: false,
             approval_tokens: Vec::new(),
             native_balance: U256::from(profit_wei + cost_wei),
