@@ -4,6 +4,7 @@ mod config;
 mod contract;
 mod dashboard;
 mod extractor;
+mod frontrun;
 mod monitor;
 mod queue;
 mod rpc;
@@ -144,6 +145,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Storage: {}", config.storage_path.display());
     info!("RPC endpoints configured: {}", rpc_fleet.endpoint_count());
     info!("Dashboard: http://{}", config.dashboard_addr);
+    info!("Mempool monitor: {}", config.enable_mempool_monitor);
 
     if maybe_run_network_benchmark(config.clone(), rpc_fleet.clone(), &wallets).await? {
         return Ok(());
@@ -220,6 +222,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tokio::time::sleep(std::time::Duration::from_secs(refresh_interval_secs)).await;
         }
     });
+
+    if config.enable_mempool_monitor {
+        let frontrun_config = config.clone();
+        let frontrun_dashboard = dashboard.clone();
+        tokio::spawn(async move {
+            if let Err(err) =
+                frontrun::start_mempool_monitor(frontrun_config, frontrun_dashboard).await
+            {
+                error!("Mempool monitor failed: {}", err);
+            }
+        });
+    }
 
     if duplicate_keys > 0 {
         dashboard.event(
