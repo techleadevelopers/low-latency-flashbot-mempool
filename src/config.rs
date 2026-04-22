@@ -117,6 +117,11 @@ pub struct MevConfig {
     pub uniswap_v2_factory: Option<Address>,
     pub searcher_recipient: Option<Address>,
     pub mev_executor: Option<Address>,
+    pub builder_relays: Vec<String>,
+    pub inclusion_min_ev_usd: f64,
+    pub inclusion_max_attempts: u8,
+    pub inclusion_base_tip_bps: u64,
+    pub inclusion_max_tip_bps: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -559,6 +564,29 @@ impl Config {
                 .ok()
                 .map(|value| value.trim().parse::<Address>())
                 .transpose()?,
+            builder_relays: env::var("MEV_BUILDER_RELAYS")
+                .ok()
+                .map(|raw| {
+                    raw.split(',')
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                        .map(str::to_string)
+                        .collect::<Vec<_>>()
+                })
+                .filter(|relays| !relays.is_empty())
+                .unwrap_or_else(|| vec![flashbots_relay.clone()]),
+            inclusion_min_ev_usd: env::var("MEV_INCLUSION_MIN_EV_USD")
+                .unwrap_or_else(|_| "1.0".to_string())
+                .parse::<f64>()?,
+            inclusion_max_attempts: env::var("MEV_INCLUSION_MAX_ATTEMPTS")
+                .unwrap_or_else(|_| "2".to_string())
+                .parse::<u8>()?,
+            inclusion_base_tip_bps: env::var("MEV_INCLUSION_BASE_TIP_BPS")
+                .unwrap_or_else(|_| "800".to_string())
+                .parse::<u64>()?,
+            inclusion_max_tip_bps: env::var("MEV_INCLUSION_MAX_TIP_BPS")
+                .unwrap_or_else(|_| "3500".to_string())
+                .parse::<u64>()?,
         };
 
         let mut infura_ids = Vec::new();
