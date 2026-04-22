@@ -8,7 +8,6 @@ use crate::mev::simulation::bundle_simulator::{BundleSimulationRequest, BundleSi
 use crate::rpc::RpcFleet;
 use ethers::prelude::*;
 use ethers::types::transaction::eip2718::TypedTransaction;
-use ethers::types::transaction::eip2718::TypedTransaction;
 use ethers_flashbots::{BundleRequest, FlashbotsMiddleware};
 use std::sync::{Arc, Mutex};
 use tracing::warn;
