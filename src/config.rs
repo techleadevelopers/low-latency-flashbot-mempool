@@ -115,6 +115,7 @@ pub struct MevConfig {
     pub eth_usd_price: f64,
     pub uniswap_v2_factory: Option<Address>,
     pub searcher_recipient: Option<Address>,
+    pub mev_executor: Option<Address>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -547,6 +548,10 @@ impl Config {
                 .map(|value| value.trim().parse::<Address>())
                 .transpose()?,
             searcher_recipient: env::var("MEV_SEARCHER_RECIPIENT")
+                .ok()
+                .map(|value| value.trim().parse::<Address>())
+                .transpose()?,
+            mev_executor: env::var("MEV_EXECUTOR_ADDRESS")
                 .ok()
                 .map(|value| value.trim().parse::<Address>())
                 .transpose()?,
