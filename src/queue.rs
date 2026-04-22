@@ -178,7 +178,11 @@ impl SweepQueue {
         }
 
         let now = Instant::now();
-        let dedupe_key = (candidate.wallet, candidate.operation, candidate.execution_mode);
+        let dedupe_key = (
+            candidate.wallet,
+            candidate.operation,
+            candidate.execution_mode,
+        );
         if let Some(last_enqueued_at) = self.last_enqueued_at.get(&dedupe_key) {
             if now.saturating_duration_since(*last_enqueued_at) < self.dedupe_window {
                 return false;
