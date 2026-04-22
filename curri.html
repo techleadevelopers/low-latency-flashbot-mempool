@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Paulo Silas - Software Engineer</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'Segoe UI', -apple-system, sans-serif; background: #f0f2f5; padding: 40px 20px; line-height: 1.4; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); overflow: hidden; }
+        
+        /* Header com foto e borda redonda */
+        .header { background: #1a1a2e; color: white; padding: 30px 35px; display: flex; gap: 25px; align-items: center; flex-wrap: wrap; }
+        .profile-img { width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid #4a9eff; background: #eee; }
+        .header-info { flex: 1; }
+        .header h1 { font-size: 2rem; font-weight: 600; letter-spacing: -0.5px; margin-bottom: 5px; }
+        .header .title { font-size: 1rem; color: #aaa; font-weight: 400; margin-bottom: 10px; }
+        .contact-info { display: flex; flex-wrap: wrap; gap: 15px; font-size: 0.8rem; color: #ccc; margin-top: 8px; }
+        .contact-info i { width: 18px; color: #4a9eff; margin-right: 5px; }
+        .contact-info a { color: #ccc; text-decoration: none; }
+        .contact-info a:hover { color: white; }
+        
+        @media (max-width: 600px) {
+            .header { flex-direction: column; text-align: center; }
+            .contact-info { justify-content: center; }
+        }
+        
+        .content { padding: 30px 35px; }
+        
+        h2 { font-size: 1.2rem; font-weight: 600; color: #1a1a2e; border-bottom: 2px solid #4a9eff; padding-bottom: 6px; margin: 20px 0 15px 0; display: inline-block; }
+        h2:first-of-type { margin-top: 0; }
+        
+        .section { margin-bottom: 25px; }
+        
+        .job { margin-bottom: 20px; }
+        .job-header { display: flex; justify-content: space-between; flex-wrap: wrap; margin-bottom: 8px; }
+        .job-title { font-weight: 700; font-size: 1rem; color: #1a1a2e; }
+        .job-company { font-weight: 600; color: #4a9eff; }
+        .job-date { font-size: 0.8rem; color: #666; }
+        .job ul { margin-left: 20px; margin-top: 6px; }
+        .job li { font-size: 0.85rem; color: #333; margin-bottom: 4px; line-height: 1.4; }
+        
+        .skills-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; margin-top: 10px; }
+        .skill-card { background: #f8f9fa; padding: 12px 15px; border-radius: 6px; border-left: 3px solid #4a9eff; }
+        .skill-card strong { display: block; font-size: 0.85rem; color: #1a1a2e; margin-bottom: 6px; }
+        .skill-card p { font-size: 0.8rem; color: #555; line-height: 1.4; }
+        
+        .badge { display: inline-block; background: #e9ecef; padding: 2px 10px; border-radius: 4px; font-size: 0.7rem; font-weight: 500; color: #1a1a2e; margin-right: 5px; margin-bottom: 5px; }
+        
+        hr { margin: 20px 0; border: none; border-top: 1px solid #e0e0e0; }
+        
+        @media (max-width: 600px) {
+            .content { padding: 20px; }
+            .job-header { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <div class="header">
+        <img class="profile-img" src="https://res.cloudinary.com/limpeja/image/upload/v1770667305/perfil_wntxvz.jpg" alt="Paulo Silas">
+        <div class="header-info">
+            <h1>Paulo Silas de Campos Filho</h1>
+            <div class="title">Software Engineer | Automation & Migration Specialist</div>
+            <div class="contact-info">
+                <span><i class="fas fa-map-marker-alt"></i> Campinas, SP - Brazil</span>
+                <span><i class="fas fa-envelope"></i> paulocienciadacomputacao@gmail.com</span>
+                <span><i class="fas fa-phone"></i> +55 19 99464-7291</span>
+                <span><i class="fab fa-github"></i> <a href="https://github.com/techleadevelopers">github.com/techleadevelopers</a></span>
+                <span><i class="fab fa-linkedin"></i> <a href="https://linkedin.com/in/ai-specialist-engineer/">linkedin.com/in/ai-specialist-engineer</a></span>
+            </div>
+        </div>
+    </div>
+
+    <div class="content">
+        <!-- Professional Summary - destacando Python, Go e RUST -->
+        <div class="section">
+            <h2>Professional Summary</h2>
+            <p style="margin-top: 12px; font-size: 0.9rem; line-height: 1.5;">Software Engineer with <strong>9+ years of experience</strong> in automation, scripting, and infrastructure migration. Strong proficiency in <strong>Python and Go</strong> for building scalable automation tools, with additional expertise in <strong>Rust for high-performance, low-latency processing</strong> when efficiency is critical. Proven track record of large-scale repository migrations, API integrations (GitHub, GitLab), and workflow automation. Experienced with stakeholder coordination and delivering migration projects on tight deadlines. Quick learner of internal tooling (Buganizer, Taskflow, etc.).</p>
+        </div>
+
+        <!-- Technical Skills - adicionado Rust com ênfase em eficiência -->
+        <div class="section">
+            <h2>Technical Skills</h2>
+            <div class="skills-grid">
+                <div class="skill-card">
+                    <strong>Languages</strong>
+                    <p><strong>Python</strong> (Advanced), <strong>Go</strong> (Intermediate), <strong>Rust</strong> (Systems programming, high-performance automation), TypeScript, Bash</p>
+                </div>
+                <div class="skill-card">
+                    <strong>Version Control & Repos</strong>
+                    <p>Git, GitHub API, GitLab, Repository Migration at Scale, Branch Strategy, CI/CD Pipelines (GitHub Actions)</p>
+                </div>
+                <div class="skill-card">
+                    <strong>Automation & Scripting</strong>
+                    <p>Python automation scripts, Go concurrent processing, Rust-based high-efficiency tooling, Webhooks, Cron jobs, Task schedulers</p>
+                </div>
+                <div class="skill-card">
+                    <strong>Tools & Platforms</strong>
+                    <p>Docker, Linux/Unix, REST APIs, Jira, Confluence, Agile/Scrum</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Work Experience -->
+        <div class="section">
+            <h2>Work Experience</h2>
+            
+            <div class="job">
+                <div class="job-header">
+                    <span class="job-title">Software Engineer (Automation & Infrastructure)</span>
+                    <span class="job-date">2024 – Present</span>
+                </div>
+                <div class="job-company">Independent & Open Source Projects</div>
+                <ul>
+                    <li>Developed Python/Go automation tools for repository management and bulk operations via GitHub API.</li>
+                    <li>Built <strong>high-performance migration scripts in Rust</strong> for processing large volumes of repository data with minimal memory footprint.</li>
+                    <li>Built scripts for migrating repositories between platforms, preserving commit history, branches, and metadata.</li>
+                    <li>Implemented CI/CD pipeline migrations (GitHub Actions) for internal libraries and microservices.</li>
+                    <li>Automated stakeholder reporting and progress tracking for migration initiatives.</li>
+                </ul>
+            </div>
+
+            <div class="job">
+                <div class="job-header">
+                    <span class="job-title">Full Stack Engineer</span>
+                    <span class="job-date">2024 – 2025</span>
+                </div>
+                <div class="job-company">Luxottica</div>
+                <ul>
+                    <li>Led migration of internal repositories to new release gate system, coordinating with 10+ engineering teams.</li>
+                    <li>Developed Python scripts to catalog packages, identify dependencies, and automate configuration updates.</li>
+                    <li>Created reporting dashboards to track migration progress (stakeholder engagement, milestone completion).</li>
+                    <li>Reduced manual migration effort by 60% through automation and standardized templates.</li>
+                </ul>
+            </div>
+
+            <div class="job">
+                <div class="job-header">
+                    <span class="job-title">Full Stack Engineer</span>
+                    <span class="job-date">2022 – 2024</span>
+                </div>
+                <div class="job-company">AxxisPay</div>
+                <ul>
+                    <li>Automated deployment pipelines using GitHub Actions and custom Python tooling.</li>
+                    <li>Managed multi-repository codebase with Git submodules and monorepo strategies.</li>
+                    <li>Implemented API integrations for payment processing and real-time data synchronization.</li>
+                    <li>Collaborated with cross-functional teams to define migration timelines and technical requirements.</li>
+                </ul>
+            </div>
+
+            <div class="job">
+                <div class="job-header">
+                    <span class="job-title">Junior Frontend Developer</span>
+                    <span class="job-date">2013 – 2016</span>
+                </div>
+                <div class="job-company">Souza Cruz</div>
+                <ul>
+                    <li>Developed internal tools for inventory control and automated reporting systems.</li>
+                    <li>Integrated REST APIs and built data visualization dashboards.</li>
+                    <li>Performed cross-browser testing and ensured compatibility across platforms.</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Education -->
+        <div class="section">
+            <h2>Education</h2>
+            <ul style="margin-top: 10px;">
+                <li><strong>Bachelor's in Computer Science</strong> – Universidade Anhanguera (2014–2016)</li>
+                <li><strong>Systems Analysis and Development</strong> – Centro Universitário Leonardo da Vinci (2022–2025)</li>
+            </ul>
+        </div>
+
+        <!-- Certifications -->
+        <div class="section">
+            <h2>Certifications</h2>
+            <div style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px;">
+                <span class="badge">AWS Academy - Operations on AWS</span>
+                <span class="badge">Google Data Analytics Professional</span>
+                <span class="badge">Microsoft Azure for Data Engineering</span>
+                <span class="badge">Cisco Cybersecurity Essentials</span>
+                <span class="badge">IBM Data Science Orientation</span>
+            </div>
+        </div>
+
+        <!-- Key Achievements -->
+        <div class="section">
+            <h2>Key Achievements for Migration Projects</h2>
+            <ul style="margin-top: 10px;">
+                <li><strong>Migration Scale:</strong> Successfully migrated 100+ repositories across multiple teams with zero downtime.</li>
+                <li><strong>Automation:</strong> Built Python scripts that reduced package cataloging time from 2 hours to 15 minutes per team.</li>
+                <li><strong>Performance with Rust:</strong> Developed Rust-based tooling to process and validate migration logs 10x faster than Python equivalents.</li>
+                <li><strong>Stakeholder Management:</strong> Coordinated with engineering leads to define migration windows and validate post-migration integrity.</li>
+                <li><strong>Tooling Adaptability:</strong> Proven ability to quickly learn internal ticketing systems (Jira, Buganizer-like tools) and workflow platforms (Taskflow equivalents).</li>
+            </ul>
+        </div>
+
+        <!-- Languages -->
+        <div class="section">
+            <h2>Languages</h2>
+            <ul style="margin-top: 10px;">
+                <li><strong>Portuguese:</strong> Native</li>
+                <li><strong>English:</strong> Professional working proficiency (reading/writing technical documentation, daily standups, stakeholder communication)</li>
+            </ul>
+        </div>
+    </div>
+</div>
+</body>
+</html>
