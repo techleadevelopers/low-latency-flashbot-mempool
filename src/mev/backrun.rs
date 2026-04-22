@@ -1,0 +1,398 @@
+use crate::config::{Config, MonitoredTokenConfig};
+use crate::dashboard::DashboardHandle;
+use crate::mev::capital::CapitalManager;
+use crate::mev::execution::ExecutionEngine;
+use crate::mev::opportunity::{
+    clamp_score, roi_bps, wei_to_eth_f64, MevOpportunity, OpportunityKind, OpportunityScore,
+};
+use crate::rpc::RpcFleet;
+use ethers::abi::{self, ParamType, Token};
+use ethers::providers::{Middleware, Provider, StreamExt, Ws};
+use ethers::types::{Address, Transaction, U256};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+use tracing::{debug, warn};
+
+const SWAP_EXACT_TOKENS_FOR_TOKENS: [u8; 4] = [0x38, 0xed, 0x17, 0x39];
+const SWAP_EXACT_ETH_FOR_TOKENS: [u8; 4] = [0x7f, 0xf3, 0x6a, 0xb5];
+const SWAP_EXACT_TOKENS_FOR_ETH: [u8; 4] = [0x18, 0xcb, 0xaf, 0xe5];
+const SWAP_EXACT_TOKENS_FOR_TOKENS_SUPPORTING_FEE: [u8; 4] = [0x5c, 0x11, 0xd7, 0x95];
+const SWAP_EXACT_ETH_FOR_TOKENS_SUPPORTING_FEE: [u8; 4] = [0xb6, 0xf9, 0xde, 0x95];
+const SWAP_EXACT_TOKENS_FOR_ETH_SUPPORTING_FEE: [u8; 4] = [0x79, 0x1a, 0xc9, 0x47];
+
+#[derive(Debug, Clone)]
+struct SwapSignal {
+    selector: [u8; 4],
+    amount_in: U256,
+    path: Vec<Address>,
+    router: Address,
+}
+
+pub async fn run(
+    config: Arc<Config>,
+    rpc_fleet: Arc<RpcFleet>,
+    dashboard: DashboardHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let Some(ws_url) = config.mempool_ws_url() else {
+        let message = "MEV backrun enabled but no websocket URL is available".to_string();
+        dashboard.event("warn", message.clone());
+        return Err(message.into());
+    };
+
+    let min_profit_wei = ethers::utils::parse_ether(config.mev.min_net_profit_eth.to_string())?;
+    let min_large_swap_wei = ethers::utils::parse_ether(config.mev.min_large_swap_eth.to_string())?;
+    let ws = Ws::connect(ws_url.clone()).await?;
+    let provider = Arc::new(Provider::new(ws));
+    let mut stream = provider.subscribe_pending_txs().await?;
+    let capital = Arc::new(Mutex::new(CapitalManager::from_config(&config.mev)?));
+    let executor = ExecutionEngine::new(config.clone(), rpc_fleet, dashboard.clone(), capital);
+
+    dashboard.event(
+        "info",
+        format!(
+            "MEV backrun monitor connected to {} min_large_swap={:.3} ETH min_profit={:.6} ETH",
+            ws_url, config.mev.min_large_swap_eth, config.mev.min_net_profit_eth
+        ),
+    );
+
+    while let Some(tx_hash) = stream.next().await {
+        let lookup_started = Instant::now();
+        let tx = match provider.get_transaction(tx_hash).await {
+            Ok(Some(tx)) => tx,
+            Ok(None) => continue,
+            Err(err) => {
+                warn!("pending tx lookup failed for {:?}: {}", tx_hash, err);
+                continue;
+            }
+        };
+        dashboard.record_latency(
+            "mev_pending_lookup",
+            lookup_started.elapsed().as_millis(),
+            None,
+            None,
+        );
+
+        let Some(signal) = decode_large_swap(&tx, &config.monitored_tokens, min_large_swap_wei)
+        else {
+            continue;
+        };
+
+        let gas_price = tx
+            .max_fee_per_gas
+            .or(tx.gas_price)
+            .unwrap_or_else(U256::zero);
+        if gas_price.is_zero() {
+            debug!(
+                "MEV backrun candidate skipped {:?}: missing gas price",
+                tx.hash
+            );
+            continue;
+        }
+
+        let Some(opportunity) = score_backrun(signal, &tx, gas_price, &config, min_profit_wei)
+        else {
+            continue;
+        };
+
+        if !opportunity.score.passes(
+            min_profit_wei,
+            config.mev.min_roi_bps,
+            config.mev.max_risk_score,
+            config.mev.max_competition_score,
+            config.mev.min_confidence_score,
+        ) {
+            if config.hot_path_info_events {
+                dashboard.event(
+                    "info",
+                    format!(
+                        "MEV backrun rejected victim={:?} profit={:.6} ETH roi={}bps confidence={} risk={} competition={}",
+                        opportunity.victim_tx,
+                        wei_to_eth_f64(opportunity.score.slippage_adjusted_profit_wei),
+                        opportunity.score.roi_bps,
+                        opportunity.score.confidence_score,
+                        opportunity.score.risk_score,
+                        opportunity.score.competition_score
+                    ),
+                );
+            }
+            continue;
+        }
+
+        executor.handle(opportunity).await?;
+    }
+
+    Ok(())
+}
+
+fn decode_large_swap(
+    tx: &Transaction,
+    monitored_tokens: &[MonitoredTokenConfig],
+    min_large_swap_wei: U256,
+) -> Option<SwapSignal> {
+    let selector = selector(tx)?;
+    let router = tx.to?;
+    let args = &tx.input.as_ref()[4..];
+
+    let signal = match selector {
+        SWAP_EXACT_ETH_FOR_TOKENS | SWAP_EXACT_ETH_FOR_TOKENS_SUPPORTING_FEE => {
+            let decoded = abi::decode(
+                &[
+                    ParamType::Uint(256),
+                    ParamType::Array(Box::new(ParamType::Address)),
+                    ParamType::Address,
+                    ParamType::Uint(256),
+                ],
+                args,
+            )
+            .ok()?;
+            SwapSignal {
+                selector,
+                amount_in: tx.value,
+                path: decoded.get(1).and_then(token_as_address_vec)?,
+                router,
+            }
+        }
+        SWAP_EXACT_TOKENS_FOR_TOKENS
+        | SWAP_EXACT_TOKENS_FOR_ETH
+        | SWAP_EXACT_TOKENS_FOR_TOKENS_SUPPORTING_FEE
+        | SWAP_EXACT_TOKENS_FOR_ETH_SUPPORTING_FEE => {
+            let decoded = abi::decode(
+                &[
+                    ParamType::Uint(256),
+                    ParamType::Uint(256),
+                    ParamType::Array(Box::new(ParamType::Address)),
+                    ParamType::Address,
+                    ParamType::Uint(256),
+                ],
+                args,
+            )
+            .ok()?;
+            SwapSignal {
+                selector,
+                amount_in: decoded.first().and_then(token_as_uint)?,
+                path: decoded.get(2).and_then(token_as_address_vec)?,
+                router,
+            }
+        }
+        _ => return None,
+    };
+
+    let notional_wei = estimate_notional_wei(&signal, monitored_tokens)?;
+    if notional_wei < min_large_swap_wei {
+        return None;
+    }
+
+    Some(SwapSignal {
+        amount_in: notional_wei,
+        ..signal
+    })
+}
+
+fn score_backrun(
+    signal: SwapSignal,
+    tx: &Transaction,
+    gas_price: U256,
+    config: &Config,
+    min_profit_wei: U256,
+) -> Option<MevOpportunity> {
+    if signal.path.len() < 2 {
+        return None;
+    }
+
+    let gas_limit = config
+        .estimated_exec_gas
+        .saturating_add(config.estimated_bundle_overhead_gas)
+        .max(180_000);
+    let execution_cost_wei = gas_price
+        .saturating_mul(U256::from(gas_limit))
+        .saturating_mul(U256::from(config.mev.gas_safety_margin_bps))
+        / U256::from(10_000u64);
+
+    let notional_eth = wei_to_eth_f64(signal.amount_in);
+    let residual_edge_bps = residual_edge_bps(signal.selector, notional_eth);
+    let gross_profit_wei = signal
+        .amount_in
+        .saturating_mul(U256::from(residual_edge_bps))
+        / U256::from(10_000u64);
+    let expected_profit_wei = gross_profit_wei.saturating_sub(execution_cost_wei);
+    let slippage_adjusted_profit_wei =
+        expected_profit_wei.saturating_mul(U256::from(8_000u64)) / U256::from(10_000u64);
+
+    if slippage_adjusted_profit_wei < min_profit_wei / U256::from(2u64) {
+        return None;
+    }
+
+    let competition_score = competition_score(notional_eth, tx);
+    let risk_score = risk_score(notional_eth, competition_score, tx);
+    let roi = roi_bps(slippage_adjusted_profit_wei, execution_cost_wei);
+    let confidence_score = confidence_score(
+        slippage_adjusted_profit_wei,
+        execution_cost_wei,
+        competition_score,
+    );
+
+    Some(MevOpportunity {
+        id: format!("backrun:{:?}", tx.hash),
+        kind: OpportunityKind::Backrun,
+        detected_at: Instant::now(),
+        victim_tx: tx.hash,
+        target: signal.router,
+        input_token: signal.path[0],
+        output_token: *signal.path.last()?,
+        notional_wei: signal.amount_in,
+        gas_limit,
+        private_only: true,
+        score: OpportunityScore {
+            expected_profit_wei,
+            execution_cost_wei,
+            slippage_adjusted_profit_wei,
+            roi_bps: roi,
+            risk_score,
+            competition_score,
+            confidence_score,
+        },
+        execution_payload: None,
+    })
+}
+
+fn estimate_notional_wei(
+    signal: &SwapSignal,
+    monitored_tokens: &[MonitoredTokenConfig],
+) -> Option<U256> {
+    if matches!(
+        signal.selector,
+        SWAP_EXACT_ETH_FOR_TOKENS | SWAP_EXACT_ETH_FOR_TOKENS_SUPPORTING_FEE
+    ) {
+        return Some(signal.amount_in);
+    }
+
+    let input = signal.path.first()?;
+    let token = monitored_tokens
+        .iter()
+        .find(|token| token.address == *input)?;
+    let decimals_factor = 10f64.powi(i32::from(token.decimals));
+    let normalized = signal.amount_in.to_string().parse::<f64>().ok()? / decimals_factor;
+    let value_eth = normalized * token.price_eth;
+    ethers::utils::parse_ether(value_eth.to_string()).ok()
+}
+
+fn residual_edge_bps(selector: [u8; 4], notional_eth: f64) -> u64 {
+    let base = if matches!(
+        selector,
+        SWAP_EXACT_ETH_FOR_TOKENS_SUPPORTING_FEE
+            | SWAP_EXACT_TOKENS_FOR_TOKENS_SUPPORTING_FEE
+            | SWAP_EXACT_TOKENS_FOR_ETH_SUPPORTING_FEE
+    ) {
+        4
+    } else if notional_eth >= 250.0 {
+        12
+    } else if notional_eth >= 100.0 {
+        9
+    } else {
+        6
+    };
+    base
+}
+
+fn competition_score(notional_eth: f64, tx: &Transaction) -> u16 {
+    let gas_gwei = tx
+        .max_priority_fee_per_gas
+        .or(tx.gas_price)
+        .map(wei_to_eth_f64)
+        .unwrap_or(0.0)
+        * 1e9;
+    let notional_component = if notional_eth >= 500.0 {
+        45
+    } else if notional_eth >= 150.0 {
+        30
+    } else if notional_eth >= 50.0 {
+        20
+    } else {
+        10
+    };
+    let gas_component = if gas_gwei >= 10.0 {
+        20
+    } else if gas_gwei >= 3.0 {
+        10
+    } else {
+        0
+    };
+    clamp_score(notional_component + gas_component)
+}
+
+fn risk_score(notional_eth: f64, competition: u16, tx: &Transaction) -> u16 {
+    let pathless_penalty = if tx.input.len() < 4 { 40 } else { 0 };
+    let size_penalty = if notional_eth >= 500.0 { 20 } else { 0 };
+    clamp_score(i64::from(competition / 2) + size_penalty + pathless_penalty)
+}
+
+fn confidence_score(profit_wei: U256, cost_wei: U256, competition: u16) -> u16 {
+    let roi = roi_bps(profit_wei, cost_wei);
+    let profit_eth = wei_to_eth_f64(profit_wei);
+    let profit_component = if profit_eth >= 0.02 {
+        35
+    } else if profit_eth >= 0.01 {
+        25
+    } else {
+        15
+    };
+    let roi_component = if roi >= 30_000 {
+        40
+    } else if roi >= 15_000 {
+        30
+    } else if roi >= 7_500 {
+        20
+    } else {
+        5
+    };
+    clamp_score(profit_component + roi_component + 30 - i64::from(competition))
+}
+
+fn selector(tx: &Transaction) -> Option<[u8; 4]> {
+    let input = tx.input.as_ref();
+    if input.len() < 4 {
+        return None;
+    }
+    Some([input[0], input[1], input[2], input[3]])
+}
+
+fn token_as_uint(token: &Token) -> Option<U256> {
+    match token {
+        Token::Uint(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn token_as_address(token: &Token) -> Option<Address> {
+    match token {
+        Token::Address(value) => Some(*value),
+        _ => None,
+    }
+}
+
+fn token_as_address_vec(token: &Token) -> Option<Vec<Address>> {
+    match token {
+        Token::Array(values) => values.iter().map(token_as_address).collect(),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn confidence_penalizes_competition() {
+        let high = confidence_score(U256::from(20_000u64), U256::from(1_000u64), 10);
+        let low = confidence_score(U256::from(20_000u64), U256::from(1_000u64), 80);
+        assert!(high > low);
+    }
+
+    #[test]
+    fn edge_is_conservative_for_fee_on_transfer_swaps() {
+        assert_eq!(
+            residual_edge_bps(SWAP_EXACT_ETH_FOR_TOKENS_SUPPORTING_FEE, 300.0),
+            4
+        );
+    }
+}
