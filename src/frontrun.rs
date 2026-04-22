@@ -56,7 +56,10 @@ pub async fn start_mempool_monitor(
         .with_chain_id(config.chain_id);
 
     info!("generic frontrun monitor connected to {}", ws_url);
-    dashboard.event("info", format!("generic frontrun monitor connected to {}", ws_url));
+    dashboard.event(
+        "info",
+        format!("generic frontrun monitor connected to {}", ws_url),
+    );
 
     while let Some(tx_hash) = stream.next().await {
         match provider.get_transaction(tx_hash).await {
@@ -92,13 +95,19 @@ pub async fn start_mempool_monitor(
                     Ok(bundle_hash) => {
                         dashboard.event(
                             "success",
-                            format!("frontrun bundle submitted victim={:?} bundle={:?}", tx.hash, bundle_hash),
+                            format!(
+                                "frontrun bundle submitted victim={:?} bundle={:?}",
+                                tx.hash, bundle_hash
+                            ),
                         );
                     }
                     Err(err) => {
                         dashboard.event(
                             "warn",
-                            format!("frontrun bundle submission failed victim={:?}: {}", tx.hash, err),
+                            format!(
+                                "frontrun bundle submission failed victim={:?}: {}",
+                                tx.hash, err
+                            ),
                         );
                     }
                 }
@@ -252,7 +261,10 @@ async fn submit_frontrun_bundle(
     if matches!(config.bot_mode, BotMode::Shadow) || !config.allow_send {
         dashboard.event(
             "info",
-            format!("shadow/policy prevented live frontrun submission for {:?}", victim_tx.hash),
+            format!(
+                "shadow/policy prevented live frontrun submission for {:?}",
+                victim_tx.hash
+            ),
         );
         return Err("live frontrun disabled by BOT_MODE/ALLOW_SEND".into());
     }
@@ -306,9 +318,7 @@ async fn submit_frontrun_bundle(
     Ok(bundle_hash)
 }
 
-fn build_eth_for_tokens_calldata(
-    swap: &FrontrunSwap,
-) -> Result<Bytes, Box<dyn std::error::Error>> {
+fn build_eth_for_tokens_calldata(swap: &FrontrunSwap) -> Result<Bytes, Box<dyn std::error::Error>> {
     if swap.selector != SWAP_EXACT_ETH_FOR_TOKENS {
         return Err("only swapExactETHForTokens is supported for live frontrun".into());
     }
@@ -377,4 +387,3 @@ fn format_path(path: &[Address]) -> String {
         .collect::<Vec<_>>()
         .join(" -> ")
 }
-
