@@ -141,8 +141,9 @@ pub async fn start_monitor(
             let mock_balance_wei =
                 ethers::utils::parse_ether(config.mock_hot_balance_eth.to_string())?;
             let mock_balance_eth = config.mock_hot_balance_eth;
-            let mock_cost_wei = U256::from(5_000_000_000u64)
-                .saturating_mul(U256::from(config.estimated_exec_gas + config.estimated_bundle_overhead_gas));
+            let mock_cost_wei = U256::from(5_000_000_000u64).saturating_mul(U256::from(
+                config.estimated_exec_gas + config.estimated_bundle_overhead_gas,
+            ));
             let mock_profit_wei = mock_balance_wei.saturating_sub(mock_cost_wei);
 
             if mock_profit_wei > U256::zero() && mock_balance_wei >= mock_cost_wei {
@@ -890,6 +891,33 @@ fn queue_residual_candidate(
     enqueue_latency_ms: u128,
     hot_path_info_events: bool,
 ) -> bool {
+    if candidate.estimated_net_profit_wei.is_zero() {
+        if hot_path_info_events {
+            dashboard.event(
+                "info",
+                format!(
+                    "candidate {:?} skipped: estimated net profit is zero",
+                    candidate.wallet
+                ),
+            );
+        }
+        return false;
+    }
+    if candidate.total_residual_wei <= candidate.estimated_cost_wei {
+        if hot_path_info_events {
+            dashboard.event(
+                "info",
+                format!(
+                    "candidate {:?} skipped: residual {} <= cost {}",
+                    candidate.wallet,
+                    wei_to_eth_f64(candidate.total_residual_wei),
+                    wei_to_eth_f64(candidate.estimated_cost_wei)
+                ),
+            );
+        }
+        return false;
+    }
+
     let state = wallet_states.entry(candidate.wallet).or_default();
     if state.processing {
         return false;
@@ -922,6 +950,15 @@ fn queue_residual_candidate(
     } else {
         0
     };
+    if roi_bps == 0 {
+        if hot_path_info_events {
+            dashboard.event(
+                "info",
+                format!("candidate {:?} skipped: ROI is zero", candidate.wallet),
+            );
+        }
+        return false;
+    }
 
     info!(
         "Queueing residual candidate: wallet={:?} op={} class={} profit={:.6} ETH ROI={} bps via {}",
