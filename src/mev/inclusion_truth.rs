@@ -1,5 +1,7 @@
-use ethers::types::{Address, H256, U64, U256};
+use ethers::providers::{Http, Middleware, Provider};
+use ethers::types::{Address, H256, U256, U64};
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,6 +143,31 @@ impl InclusionTruthEngine {
 
     pub fn recent(&self) -> impl Iterator<Item = &InclusionTruth> {
         self.recent_truths.iter()
+    }
+
+    pub async fn reconcile_receipts(
+        &mut self,
+        provider: Arc<Provider<Http>>,
+        current_block: u64,
+        competing: &[CompetingTxSignal],
+    ) -> Vec<InclusionTruth> {
+        let hashes: Vec<H256> = self.pending.keys().copied().collect();
+        let mut outcomes = Vec::new();
+        for hash in hashes {
+            let receipt = provider.get_transaction_receipt(hash).await.ok().flatten();
+            let included_block = receipt.as_ref().and_then(|receipt| receipt.block_number);
+            let success = receipt
+                .as_ref()
+                .and_then(|receipt| receipt.status)
+                .map(|status| status.as_u64() == 1);
+            if let Some(truth) =
+                self.reconcile_receipt(hash, included_block, success, current_block, competing)
+            {
+                outcomes.push(truth);
+            }
+        }
+        outcomes.extend(self.expire_stale(current_block));
+        outcomes
     }
 
     fn push_truth(&mut self, truth: InclusionTruth) {
