@@ -6,8 +6,8 @@ use crate::queue::{estimated_total_cost_wei, ExecutionMode, OperationType, Resid
 use crate::rpc::RpcFleet;
 use ethers::middleware::SignerMiddleware;
 use ethers::prelude::*;
-use ethers::types::transaction::eip2930::AccessList;
 use ethers::types::transaction::eip2718::TypedTransaction;
+use ethers::types::transaction::eip2930::AccessList;
 use ethers::utils::{keccak256, rlp::RlpStream};
 use ethers_flashbots::{BundleRequest, FlashbotsMiddleware};
 use std::sync::Arc;
@@ -16,6 +16,12 @@ use url::Url;
 
 fn pending_block_id() -> BlockId {
     BlockId::Number(BlockNumber::Pending)
+}
+
+fn bumped_gas_price(base: U256) -> U256 {
+    let bump_bps = U256::from(10_500u64);
+    let bumped = base.saturating_mul(bump_bps) / U256::from(10_000u64);
+    bumped.max(base.saturating_add(U256::from(1_000_000u64)))
 }
 
 fn candidate_min_profit_eth(config: &Config, asset_class: &str) -> f64 {
@@ -55,7 +61,15 @@ pub async fn execute_job(
             .await
         }
         OperationType::Install => {
-            execute_install_job(wallet, candidate, contract_addr, config, rpc_fleet, dashboard).await
+            execute_install_job(
+                wallet,
+                candidate,
+                contract_addr,
+                config,
+                rpc_fleet,
+                dashboard,
+            )
+            .await
         }
     }
 }
@@ -104,7 +118,12 @@ async fn execute_install_job(
     let provider = endpoint.provider.clone();
     let started = std::time::Instant::now();
 
-    let gas_price = provider.get_gas_price().await.unwrap_or_else(|_| U256::from(15_000_000_000u64));
+    let gas_price = bumped_gas_price(
+        provider
+            .get_gas_price()
+            .await
+            .unwrap_or_else(|_| U256::from(15_000_000_000u64)),
+    );
     let target_nonce = provider
         .get_transaction_count(wallet.address(), Some(pending_block_id()))
         .await?;
@@ -308,8 +327,9 @@ async fn execute_exec_job(
         .parse::<LocalWallet>()?
         .with_chain_id(config.chain_id);
 
-    let (calldata, gas_price, exec_value, exec_from, exec_to) =
-        if config.mock_contract_mode && config.bot_mode == BotMode::Shadow {
+    let (calldata, gas_price, exec_value, exec_from, exec_to) = if config.mock_contract_mode
+        && config.bot_mode == BotMode::Shadow
+    {
         dashboard.event(
             "info",
             format!(
@@ -361,7 +381,8 @@ async fn execute_exec_job(
 
             match contract_state.destination {
                 Some(destination)
-                    if destination == config.control_address || destination == config.forwarder => {}
+                    if destination == config.control_address || destination == config.forwarder => {
+                }
                 Some(destination) => {
                     let message = format!(
                         "destination guard failed: expected operational destination {:?} or forwarder {:?}, got {:?}",
@@ -411,12 +432,12 @@ async fn execute_exec_job(
         {
             Ok(price) => {
                 rpc_fleet.report_success(endpoint.id, started.elapsed());
-                price
+                bumped_gas_price(price)
             }
             Err(err) => {
                 warn!("gas price fetch failed on {}: {}", endpoint.name, err);
                 rpc_fleet.report_failure(endpoint.id);
-                U256::from(15_000_000_000u64)
+                bumped_gas_price(U256::from(15_000_000_000u64))
             }
         };
 
@@ -551,7 +572,8 @@ async fn execute_exec_job(
     let mut signed_candidate_txs = Vec::new();
 
     for token in &candidate.approval_tokens {
-        let approve_call = ERC20Token::new(*token, provider.clone()).approve(contract_addr, U256::MAX);
+        let approve_call =
+            ERC20Token::new(*token, provider.clone()).approve(contract_addr, U256::MAX);
         let approve_data = approve_call
             .calldata()
             .ok_or("failed to build approve calldata")?;
@@ -613,7 +635,10 @@ async fn execute_exec_job(
     let public_client = if delegate_mode {
         Arc::new(SignerMiddleware::new(provider.clone(), wallet.clone()))
     } else {
-        Arc::new(SignerMiddleware::new(provider.clone(), sponsor_wallet.clone()))
+        Arc::new(SignerMiddleware::new(
+            provider.clone(),
+            sponsor_wallet.clone(),
+        ))
     };
     let relay_url = Url::parse(&config.flashbots_relay)?;
     let flashbots = FlashbotsMiddleware::new(flashbots_client, relay_url, relay_signer);
