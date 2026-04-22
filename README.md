@@ -350,6 +350,10 @@ A trilha MEV agora contem os modulos exigidos para separar sinal de execucao:
 - `src/mev/simulation/bundle_simulator.rs`: preflight deterministico de bundle antes de envio. O live path recusa qualquer payload sem simulacao positiva.
 - `src/mev/pnl/tracker.rs`: estrutura `ExecutionResult` e reconciliacao por receipt: gas pago, tokens recebidos/gastos e lucro realizado.
 - `src/mev/analytics/missed_opportunities.rs`: `MissReason` para medir perdas por lucro baixo, competicao, simulacao, capital, latencia e payload/pool indisponivel.
+- `contracts/MevExecutor.sol`: executor atomico com flashswap Uniswap V2, swaps multi-step, safe approvals, non-reentrancy e enforcement on-chain de lucro.
+- `src/mev/execution/contract_encoder.rs`: ABI encoder para chamadas ao `MevExecutor`.
+- `src/mev/execution/flashloan_builder.rs`: builder de chamada `startV2FlashSwap(...)`.
+- `src/mev/execution/bundle_sender.rs`: helper de bundle privado com payload assinado.
 
 Politica estrita atual:
 
@@ -357,6 +361,7 @@ Politica estrita atual:
 - `live` nao envia payload sem bytes assinados.
 - `live` nao envia sem `BundleSimulator::deterministic_preflight(...)` positivo.
 - fallback publico continua bloqueado salvo `MEV_ALLOW_PUBLIC_MEMPOOL=true`.
+- o contrato reverte se `finalBalance <= initialBalance + minProfit` com `NO_PROFIT`.
 
 Configuracao low-capital adicional:
 
@@ -367,10 +372,28 @@ MEV_MAX_DAILY_LOSS_ETH=0.01
 MEV_MIN_CONFIDENCE_SCORE=80
 MEV_MAX_PRICE_IMPACT_BPS=250
 MEV_SLIPPAGE_PROTECTION_BPS=50
+MEV_EXECUTOR_ADDRESS=0xSEU_MEV_EXECUTOR_DEPLOYADO
 MEV_UNISWAP_V2_FACTORY=0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f
 ```
 
-Limite honesto: o builder ja gera calldata real e faz simulacao deterministica V2/V3, mas o projeto ainda nao tem contrato executor/flashloan especifico para assinar uma transacao atomicamente financiada. Por isso o live gate continua recusando payload sem signed tx. Isso e proposital: sem funding atomico, a operacao nao esta provada e nao deve ir para producao.
+O fluxo atomico V2 agora e:
+
+1. detectar swap grande
+2. ler pair/reserves
+3. simular estado pos-victim
+4. calcular tamanho dinamico por ROI
+5. codificar chamada `MevExecutor.startV2FlashSwap(...)`
+6. assinar tx para `MEV_EXECUTOR_ADDRESS`
+7. executar preflight de bundle
+8. enviar bundle `[victim_tx, mev_executor_tx]`
+
+O contrato garante lucro on-chain:
+
+```solidity
+require(finalBalance > initialBalance + params.minProfit, "NO_PROFIT");
+```
+
+Teste Foundry minimo foi adicionado em `test/MevExecutor.t.sol`. Neste ambiente `forge` nao estava instalado, entao o teste Solidity nao foi executado localmente. O build Rust foi validado com `cargo check`.
 
 ### Analise critica restante
 
