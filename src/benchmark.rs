@@ -49,12 +49,7 @@ pub async fn maybe_run_network_benchmark(
     println!();
 
     for handle in rpc_fleet.snapshot() {
-        println!(
-            "[{}] {} ({})",
-            handle.kind,
-            handle.name,
-            handle.url
-        );
+        println!("[{}] {} ({})", handle.kind, handle.name, handle.url);
 
         let endpoint = rpc_fleet
             .all_handles()
@@ -125,7 +120,10 @@ pub async fn maybe_run_network_benchmark(
     Ok(true)
 }
 
-async fn benchmark_bundle_submission(config: &Config, endpoint: &crate::rpc::RpcHandle) -> ProbeMetrics {
+async fn benchmark_bundle_submission(
+    config: &Config,
+    endpoint: &crate::rpc::RpcHandle,
+) -> ProbeMetrics {
     let samples = env_u64("NETWORK_BENCHMARK_BUNDLE_SAMPLES", 3) as usize;
     let sponsor_wallet = match config
         .sender_private_key
@@ -174,8 +172,7 @@ async fn benchmark_bundle_submission(config: &Config, endpoint: &crate::rpc::Rpc
                 .map_err(|err| format!("bundle sign failed: {}", err))?;
             let signed_tx = tx.rlp_signed(&signature);
 
-            let flashbots_client =
-                SignerMiddleware::new(provider.clone(), middleware_signer);
+            let flashbots_client = SignerMiddleware::new(provider.clone(), middleware_signer);
             let flashbots =
                 FlashbotsMiddleware::new(flashbots_client, relay_url.clone(), relay_signer.clone());
             let bundle = BundleRequest::new()
