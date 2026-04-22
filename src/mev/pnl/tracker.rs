@@ -62,7 +62,10 @@ pub fn result_from_receipt(
     let gas_paid = gas_used.saturating_mul(effective_gas_price);
     let gross = tokens_received_wei.saturating_sub(tokens_spent_wei);
     let realized = gross.saturating_sub(gas_paid);
-    let success = receipt.status.map(|status| status.as_u64() == 1).unwrap_or(false);
+    let success = receipt
+        .status
+        .map(|status| status.as_u64() == 1)
+        .unwrap_or(false);
 
     ExecutionResult {
         expected_profit: wei_to_eth_f64(expected_profit_wei),
