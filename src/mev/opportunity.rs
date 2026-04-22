@@ -1,4 +1,5 @@
-use ethers::types::{Address, Bytes, TxHash, U256};
+use crate::mev::execution::payload_builder::ExecutionPayload;
+use ethers::types::{Address, TxHash, U256};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,7 +56,7 @@ pub struct MevOpportunity {
     pub gas_limit: u64,
     pub private_only: bool,
     pub score: OpportunityScore,
-    pub execution_payload: Option<Bytes>,
+    pub execution_payload: Option<ExecutionPayload>,
 }
 
 impl MevOpportunity {
