@@ -1,6 +1,8 @@
 use crate::config::Config;
 use crate::dashboard::DashboardHandle;
-use crate::mev::competition::{CompetitionIntelligence, PoolActivity};
+use crate::mev::competition::{
+    extract_block_signals, CompetitionForecast, CompetitionIntelligence, PoolActivity, PressureMap,
+};
 use crate::mev::feedback::FeedbackEngine;
 use crate::mev::inclusion::{InclusionEngine, InclusionFeedback};
 use crate::mev::inclusion_truth::{
@@ -10,7 +12,7 @@ use crate::mev::post_block::PostBlockAnalyzer;
 use crate::mev::tip_discovery::{OpportunityClass, TipDiscoveryEngine, TipOutcome};
 use crate::rpc::RpcFleet;
 use ethers::providers::Middleware;
-use ethers::types::{Address, H256, U256};
+use ethers::types::{Address, Transaction, H256, U256};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::MissedTickBehavior;
@@ -28,6 +30,7 @@ pub enum FinalizedInclusion {
 pub struct LearningRuntime {
     truth: Arc<Mutex<InclusionTruthEngine>>,
     competition: Arc<Mutex<CompetitionIntelligence>>,
+    pressure: Arc<Mutex<PressureMap>>,
     tips: Arc<Mutex<TipDiscoveryEngine>>,
     post_block: Arc<Mutex<PostBlockAnalyzer>>,
     feedback: Arc<Mutex<FeedbackEngine>>,
@@ -47,6 +50,7 @@ impl LearningRuntime {
         Self {
             truth: Arc::new(Mutex::new(InclusionTruthEngine::new(512, 2))),
             competition: Arc::new(Mutex::new(CompetitionIntelligence::new(512))),
+            pressure: Arc::new(Mutex::new(PressureMap::new(512))),
             tips: Arc::new(Mutex::new(TipDiscoveryEngine::new(512))),
             post_block: Arc::new(Mutex::new(PostBlockAnalyzer::new(512))),
             feedback: Arc::new(Mutex::new(FeedbackEngine::new(512))),
@@ -87,6 +91,50 @@ impl LearningRuntime {
 
     pub fn inclusion(&self) -> Arc<Mutex<InclusionEngine>> {
         self.inclusion.clone()
+    }
+
+    pub fn pressure(&self) -> Arc<Mutex<PressureMap>> {
+        self.pressure.clone()
+    }
+
+    pub fn observe_pending_transaction(&self, tx: &Transaction) {
+        let observed_ms = unix_ms();
+        let intent =
+            self.competition.lock().ok().and_then(|mut competition| {
+                competition.observe_pending_transaction(tx, observed_ms)
+            });
+        if let Some(intent) = intent {
+            let forecast = self.competition_forecast(
+                intent.key.router,
+                intent.key.token_in,
+                intent.key.token_out,
+                intent.key.selector,
+            );
+            if let Ok(mut pressure) = self.pressure.lock() {
+                pressure.record_forecast(intent.key.router, forecast);
+            }
+        }
+    }
+
+    pub fn competition_forecast(
+        &self,
+        pool: Address,
+        token_in: Address,
+        token_out: Address,
+        selector: [u8; 4],
+    ) -> CompetitionForecast {
+        self.competition
+            .lock()
+            .map(|competition| competition.forecast(pool, token_in, token_out, selector))
+            .unwrap_or(CompetitionForecast {
+                block_probability: 0.20,
+                mempool_density: 0.0,
+                similar_pending: 0,
+                pressure_probability: 0.20,
+                likely_outbid: false,
+                tip_multiplier: 1.0,
+                max_pending_tip_wei: U256::zero(),
+            })
     }
 }
 
@@ -141,7 +189,7 @@ async fn process_block(
     block_number: u64,
     dashboard: &DashboardHandle,
 ) {
-    let competing = collect_competing_signals(runtime, block_number);
+    let competing = collect_competing_signals(runtime, provider.clone(), block_number).await;
     let pending_hashes = runtime
         .truth
         .lock()
@@ -202,11 +250,24 @@ async fn process_block(
     }
 }
 
-fn collect_competing_signals(
-    _runtime: &LearningRuntime,
-    _block_number: u64,
+async fn collect_competing_signals(
+    runtime: &LearningRuntime,
+    provider: Arc<ethers::providers::Provider<ethers::providers::Http>>,
+    block_number: u64,
 ) -> Vec<CompetingTxSignal> {
-    Vec::new()
+    let block = provider
+        .get_block_with_txs(ethers::types::BlockId::Number(block_number.into()))
+        .await
+        .ok()
+        .flatten();
+    let Some(block) = block else {
+        return Vec::new();
+    };
+    let signals = extract_block_signals(block_number, &block.transactions, 256);
+    if let Ok(mut pressure) = runtime.pressure.lock() {
+        pressure.record_block(&signals);
+    }
+    signals.into_iter().map(Into::into).collect()
 }
 
 fn classify(outcome: &BundleOutcome) -> FinalizedInclusion {
@@ -342,4 +403,11 @@ fn update_survival(runtime: &LearningRuntime, finalized: FinalizedInclusion, blo
         survival.enabled = survival.degradation_ewma > 0.55;
         survival.last_block = block_number;
     }
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or_default()
 }
