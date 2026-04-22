@@ -1,5 +1,5 @@
 use crate::mev::execution::payload_builder::ExecutionPayload;
-use ethers::types::{Address, TxHash, U256};
+use ethers::types::{Address, Transaction, TxHash, U256};
 use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +49,7 @@ pub struct MevOpportunity {
     pub kind: OpportunityKind,
     pub detected_at: Instant,
     pub victim_tx: TxHash,
+    pub victim_transaction: Option<Transaction>,
     pub target: Address,
     pub input_token: Address,
     pub output_token: Address,
