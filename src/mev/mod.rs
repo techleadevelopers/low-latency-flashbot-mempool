@@ -3,6 +3,7 @@ pub mod analytics;
 pub mod backrun;
 pub mod capital;
 pub mod execution;
+pub mod meta_decision;
 pub mod opportunity;
 pub mod pnl;
 pub mod simulation;
