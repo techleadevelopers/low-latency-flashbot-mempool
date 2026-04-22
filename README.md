@@ -55,6 +55,58 @@ Limitacao:
 - nativo da wallet alvo nao entra por `transferFrom`
 - para nativo, precisa de outro caminho como delegate/7702
 
+## Pre-delegacao 7702
+
+Para wallets do proprio ecossistema, da para provisionar a delegacao antes e deixar o monitor principal so com o papel de detectar saldo e disparar o sweep.
+
+Existe um binario dedicado:
+
+```bash
+cargo run --bin predelegate_7702 -- \
+  --wallets keys.txt \
+  --rpc-url https://arbitrum-mainnet.infura.io/v3/SEU_RPC \
+  --chain-id 42161 \
+  --delegate-contract 0xSEU_CONTRATO_DEPLOYADO \
+  --sponsor-private-key 0xSUA_SENDER_PRIVATE_KEY
+```
+
+Esse fluxo:
+
+1. le as wallets-alvo do arquivo
+2. usa cada chave da wallet-alvo para assinar a autorizacao 7702
+3. usa a sponsor key para enviar a tx `0x04` de instalacao
+4. imprime o tx hash e valida se a wallet deixou de ter code vazio
+
+Isso nao altera o monitor principal nem o fluxo on-demand; serve como provisionamento previo.
+
+## Pre-approve spender
+
+Para o fallback `spender`, da para provisionar approvals antes do monitor principal.
+
+Binario dedicado:
+
+```bash
+cargo run --bin preapprove_spender -- \
+  --wallets keys.txt \
+  --rpc-url https://arbitrum-mainnet.infura.io/v3/SEU_RPC \
+  --chain-id 42161 \
+  --spender-contract 0xSEU_CONTRATO_DEPLOYADO \
+  --token USDC:0xaf88d065e77c8cC2239327C5EDb3A432268e5831:max \
+  --token USDT:0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9:max \
+  --token WETH:0x82af49447d8a07e3bd95bd0d56f35241523fbab1:max
+```
+
+Formato de cada token:
+
+- `SYMBOL:ADDRESS:AMOUNT`
+- `AMOUNT` pode ser valor bruto decimal ou `max`
+
+Uso recomendado:
+
+- `7702` como principal
+- `spender` so para whitelist explicita de tokens
+- evitar approvals abertos para qualquer ativo
+
 ## Politica por ativo
 
 O projeto diferencia tres classes:
