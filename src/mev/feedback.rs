@@ -1,5 +1,7 @@
 use std::collections::VecDeque;
 
+use crate::mev::inclusion_truth::{BundleOutcome, InclusionTruth};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FailureReason {
     NotIncluded,
@@ -151,6 +153,37 @@ impl FeedbackEngine {
 
     pub fn failure_count(&self, reason: FailureReason) -> u64 {
         self.failure_distribution[reason.index()]
+    }
+
+    pub fn record_inclusion_truth(&mut self, truth: &InclusionTruth, realized_profit_usd: f64) {
+        let success = matches!(truth.outcome, BundleOutcome::Included);
+        let included = matches!(
+            truth.outcome,
+            BundleOutcome::Included | BundleOutcome::LateInclusion
+        );
+        let reason = match truth.outcome {
+            BundleOutcome::Pending | BundleOutcome::Included => None,
+            BundleOutcome::NotIncluded => Some(FailureReason::NotIncluded),
+            BundleOutcome::Outbid => Some(FailureReason::Outbid),
+            BundleOutcome::Reverted => Some(FailureReason::Reverted),
+            BundleOutcome::LateInclusion => Some(FailureReason::StaleState),
+        };
+        self.record(ExecutionFeedback {
+            success,
+            included,
+            profit_expected: truth.expected_profit_usd,
+            profit_realized: realized_profit_usd,
+            gas_used: 0.0,
+            tip_used: truth.tip_wei.to_string().parse::<f64>().unwrap_or(0.0) / 1e18,
+            competition_score: truth.competition_score,
+            confidence_score: 0.0,
+            relay_used: truth.relay.clone(),
+            block_delay: truth
+                .included_block
+                .map(|block| block.saturating_sub(truth.target_block))
+                .unwrap_or_default(),
+            failure_reason: reason,
+        });
     }
 
     fn update_metrics(&mut self, feedback: &ExecutionFeedback) {
