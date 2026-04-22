@@ -4,6 +4,7 @@ use crate::mev::analytics::missed_opportunities::{MissReason, MissedOpportunityT
 use crate::mev::capital::CapitalManager;
 use crate::mev::feedback::{ExecutionFeedback, FailureReason, FeedbackEngine};
 use crate::mev::inclusion::{InclusionContext, InclusionEngine};
+use crate::mev::inclusion_truth::{InclusionTruthEngine, PendingBundleRecord};
 use crate::mev::opportunity::{wei_to_eth_f64, MevOpportunity};
 use crate::mev::pnl::tracker::PnlTracker;
 use crate::mev::simulation::bundle_simulator::{BundleSimulationRequest, BundleSimulator};
@@ -24,6 +25,7 @@ pub struct ExecutionEngine {
     pnl: Arc<Mutex<PnlTracker>>,
     inclusion: Arc<Mutex<InclusionEngine>>,
     feedback: Arc<Mutex<FeedbackEngine>>,
+    truth: Arc<Mutex<InclusionTruthEngine>>,
 }
 
 impl ExecutionEngine {
@@ -42,6 +44,7 @@ impl ExecutionEngine {
             pnl: Arc::new(Mutex::new(PnlTracker::default())),
             inclusion: Arc::new(Mutex::new(InclusionEngine::from_config(&config))),
             feedback: Arc::new(Mutex::new(FeedbackEngine::new(256))),
+            truth: Arc::new(Mutex::new(InclusionTruthEngine::new(256, 2))),
         }
     }
 
@@ -316,6 +319,21 @@ impl ExecutionEngine {
         let bundle_result = flashbots.send_bundle(&bundle).await;
         match bundle_result {
             Ok(pending) => {
+                let tx_hash = signed_tx_hash(&payload.tx);
+                self.truth
+                    .lock()
+                    .expect("truth engine lock")
+                    .register(PendingBundleRecord {
+                        bundle_hash: pending.bundle_hash,
+                        tx_hash,
+                        target_block: (block + 1).as_u64(),
+                        submitted_at: std::time::Instant::now(),
+                        relay: self.config.flashbots_relay.clone(),
+                        tip_wei: inclusion_plan.tip_wei,
+                        expected_profit_usd: payload.expected_profit
+                            * self.config.mev.eth_usd_price,
+                        competition_score: opportunity.score.competition_score as f64 / 100.0,
+                    });
                 self.dashboard.record_latency(
                     "mev_bundle_attempt",
                     started.elapsed().as_millis(),
@@ -414,6 +432,10 @@ impl ExecutionEngine {
             ),
         );
     }
+}
+
+fn signed_tx_hash(raw: &Bytes) -> H256 {
+    H256::from(ethers::utils::keccak256(raw.as_ref()))
 }
 
 async fn sign_executor_transaction(
