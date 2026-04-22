@@ -1,6 +1,7 @@
 use crate::config::{BotMode, Config};
 use crate::dashboard::DashboardHandle;
 use crate::mev::analytics::missed_opportunities::{MissReason, MissedOpportunityTracker};
+use crate::mev::block_loop::{ExecutionEvent, LearningRuntime};
 use crate::mev::capital::CapitalManager;
 use crate::mev::feedback::{ExecutionFeedback, FailureReason, FeedbackEngine};
 use crate::mev::inclusion::{InclusionContext, InclusionEngine};
@@ -26,6 +27,7 @@ pub struct ExecutionEngine {
     inclusion: Arc<Mutex<InclusionEngine>>,
     feedback: Arc<Mutex<FeedbackEngine>>,
     truth: Arc<Mutex<InclusionTruthEngine>>,
+    learning: Option<LearningRuntime>,
 }
 
 impl ExecutionEngine {
@@ -45,7 +47,15 @@ impl ExecutionEngine {
             inclusion: Arc::new(Mutex::new(InclusionEngine::from_config(&config))),
             feedback: Arc::new(Mutex::new(FeedbackEngine::new(256))),
             truth: Arc::new(Mutex::new(InclusionTruthEngine::new(256, 2))),
+            learning: None,
         }
+    }
+
+    pub fn with_learning_runtime(mut self, learning: LearningRuntime) -> Self {
+        self.feedback = learning.feedback();
+        self.inclusion = learning.inclusion();
+        self.learning = Some(learning);
+        self
     }
 
     pub async fn handle(
@@ -320,20 +330,33 @@ impl ExecutionEngine {
         match bundle_result {
             Ok(pending) => {
                 let tx_hash = signed_tx_hash(&payload.tx);
-                self.truth
-                    .lock()
-                    .expect("truth engine lock")
-                    .register(PendingBundleRecord {
-                        bundle_hash: pending.bundle_hash,
-                        tx_hash,
-                        target_block: (block + 1).as_u64(),
-                        submitted_at: std::time::Instant::now(),
-                        relay: self.config.flashbots_relay.clone(),
-                        tip_wei: inclusion_plan.tip_wei,
-                        expected_profit_usd: payload.expected_profit
-                            * self.config.mev.eth_usd_price,
-                        competition_score: opportunity.score.competition_score as f64 / 100.0,
-                    });
+                let event = ExecutionEvent {
+                    bundle_hash: pending.bundle_hash,
+                    tx_hash,
+                    target_block: (block + 1).as_u64(),
+                    submitted_at: std::time::Instant::now(),
+                    relay: self.config.flashbots_relay.clone(),
+                    tip_wei: inclusion_plan.tip_wei,
+                    expected_profit_usd: payload.expected_profit * self.config.mev.eth_usd_price,
+                    competition_score: opportunity.score.competition_score as f64 / 100.0,
+                };
+                if let Some(learning) = &self.learning {
+                    learning.register_execution(event);
+                } else {
+                    self.truth
+                        .lock()
+                        .expect("truth engine lock")
+                        .register(PendingBundleRecord {
+                            bundle_hash: event.bundle_hash,
+                            tx_hash: event.tx_hash,
+                            target_block: event.target_block,
+                            submitted_at: event.submitted_at,
+                            relay: event.relay,
+                            tip_wei: event.tip_wei,
+                            expected_profit_usd: event.expected_profit_usd,
+                            competition_score: event.competition_score,
+                        });
+                }
                 self.dashboard.record_latency(
                     "mev_bundle_attempt",
                     started.elapsed().as_millis(),
