@@ -108,6 +108,13 @@ pub struct MevConfig {
     pub allow_public_mempool: bool,
     pub max_pending_age_ms: u64,
     pub paper_fill_probability_bps: u64,
+    pub max_gas_per_tx: u64,
+    pub max_price_impact_bps: u64,
+    pub slippage_protection_bps: u64,
+    pub min_profit_usd: f64,
+    pub eth_usd_price: f64,
+    pub uniswap_v2_factory: Option<Address>,
+    pub searcher_recipient: Option<Address>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -520,6 +527,29 @@ impl Config {
             paper_fill_probability_bps: env::var("MEV_PAPER_FILL_PROBABILITY_BPS")
                 .unwrap_or_else(|_| "6500".to_string())
                 .parse::<u64>()?,
+            max_gas_per_tx: env::var("MEV_MAX_GAS_PER_TX")
+                .unwrap_or_else(|_| "260000".to_string())
+                .parse::<u64>()?,
+            max_price_impact_bps: env::var("MEV_MAX_PRICE_IMPACT_BPS")
+                .unwrap_or_else(|_| "250".to_string())
+                .parse::<u64>()?,
+            slippage_protection_bps: env::var("MEV_SLIPPAGE_PROTECTION_BPS")
+                .unwrap_or_else(|_| "50".to_string())
+                .parse::<u64>()?,
+            min_profit_usd: env::var("MEV_MIN_PROFIT_USD")
+                .unwrap_or_else(|_| "2.0".to_string())
+                .parse::<f64>()?,
+            eth_usd_price: env::var("MEV_ETH_USD_PRICE")
+                .unwrap_or_else(|_| "3200.0".to_string())
+                .parse::<f64>()?,
+            uniswap_v2_factory: env::var("MEV_UNISWAP_V2_FACTORY")
+                .ok()
+                .map(|value| value.trim().parse::<Address>())
+                .transpose()?,
+            searcher_recipient: env::var("MEV_SEARCHER_RECIPIENT")
+                .ok()
+                .map(|value| value.trim().parse::<Address>())
+                .transpose()?,
         };
 
         let mut infura_ids = Vec::new();
