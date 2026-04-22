@@ -176,7 +176,8 @@ impl ExecutionEngine {
         }
 
         let started = std::time::Instant::now();
-        match flashbots.send_bundle(&bundle).await {
+        let bundle_result = flashbots.send_bundle(&bundle).await;
+        match bundle_result {
             Ok(pending) => {
                 self.dashboard.record_latency(
                     "mev_bundle_attempt",
