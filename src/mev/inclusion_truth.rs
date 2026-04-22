@@ -81,7 +81,7 @@ impl InclusionTruthEngine {
         let latency_ms = record.submitted_at.elapsed().as_millis();
         let included = included_block.map(|block| block.as_u64());
         let outcome = match (included, success) {
-            (Some(block), Some(false)) => BundleOutcome::Reverted,
+            (Some(_block), Some(false)) => BundleOutcome::Reverted,
             (Some(block), _) if block > record.target_block => BundleOutcome::LateInclusion,
             (Some(_), _) => BundleOutcome::Included,
             (None, _) if current_block > record.target_block + self.max_pending_blocks => {
@@ -143,6 +143,10 @@ impl InclusionTruthEngine {
 
     pub fn recent(&self) -> impl Iterator<Item = &InclusionTruth> {
         self.recent_truths.iter()
+    }
+
+    pub fn pending_hashes(&self) -> Vec<H256> {
+        self.pending.keys().copied().collect()
     }
 
     pub async fn reconcile_receipts(
