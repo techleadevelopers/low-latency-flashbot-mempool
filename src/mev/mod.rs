@@ -1,6 +1,7 @@
 pub mod amm;
 pub mod analytics;
 pub mod backrun;
+pub mod block_loop;
 pub mod capital;
 pub mod competition;
 pub mod execution;
