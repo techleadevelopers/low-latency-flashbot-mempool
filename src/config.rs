@@ -113,6 +113,7 @@ pub struct MevConfig {
     pub slippage_protection_bps: u64,
     pub min_profit_usd: f64,
     pub eth_usd_price: f64,
+    pub min_liquidity_eth: f64,
     pub uniswap_v2_factory: Option<Address>,
     pub searcher_recipient: Option<Address>,
     pub mev_executor: Option<Address>,
@@ -542,6 +543,9 @@ impl Config {
                 .parse::<f64>()?,
             eth_usd_price: env::var("MEV_ETH_USD_PRICE")
                 .unwrap_or_else(|_| "3200.0".to_string())
+                .parse::<f64>()?,
+            min_liquidity_eth: env::var("MEV_MIN_LIQUIDITY_ETH")
+                .unwrap_or_else(|_| "25.0".to_string())
                 .parse::<f64>()?,
             uniswap_v2_factory: env::var("MEV_UNISWAP_V2_FACTORY")
                 .ok()
