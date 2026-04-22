@@ -2,6 +2,8 @@ use crate::config::{BotMode, Config};
 use crate::dashboard::DashboardHandle;
 use crate::mev::analytics::missed_opportunities::{MissReason, MissedOpportunityTracker};
 use crate::mev::capital::CapitalManager;
+use crate::mev::feedback::{ExecutionFeedback, FailureReason, FeedbackEngine};
+use crate::mev::inclusion::{InclusionContext, InclusionEngine};
 use crate::mev::opportunity::{wei_to_eth_f64, MevOpportunity};
 use crate::mev::pnl::tracker::PnlTracker;
 use crate::mev::simulation::bundle_simulator::{BundleSimulationRequest, BundleSimulator};
@@ -20,6 +22,8 @@ pub struct ExecutionEngine {
     capital: Arc<Mutex<CapitalManager>>,
     missed: Arc<Mutex<MissedOpportunityTracker>>,
     pnl: Arc<Mutex<PnlTracker>>,
+    inclusion: Arc<Mutex<InclusionEngine>>,
+    feedback: Arc<Mutex<FeedbackEngine>>,
 }
 
 impl ExecutionEngine {
@@ -30,12 +34,14 @@ impl ExecutionEngine {
         capital: Arc<Mutex<CapitalManager>>,
     ) -> Self {
         Self {
-            config,
+            config: config.clone(),
             rpc_fleet,
             dashboard,
             capital,
             missed: Arc::new(Mutex::new(MissedOpportunityTracker::default())),
             pnl: Arc::new(Mutex::new(PnlTracker::default())),
+            inclusion: Arc::new(Mutex::new(InclusionEngine::from_config(&config))),
+            feedback: Arc::new(Mutex::new(FeedbackEngine::new(256))),
         }
     }
 
@@ -178,6 +184,64 @@ impl ExecutionEngine {
 
         let endpoint = self.rpc_fleet.send_endpoint();
         let provider = endpoint.provider.clone();
+        let adaptive_thresholds = self
+            .feedback
+            .lock()
+            .expect("feedback engine lock")
+            .thresholds();
+        let feedback_metrics = self
+            .feedback
+            .lock()
+            .expect("feedback engine lock")
+            .metrics();
+        let inclusion_plan = {
+            let inclusion = self.inclusion.lock().expect("inclusion engine lock");
+            inclusion.plan(
+                InclusionContext {
+                    expected_profit_usd: wei_to_eth_f64(payload.expected_profit_wei)
+                        * self.config.mev.eth_usd_price,
+                    gas_cost_usd: wei_to_eth_f64(opportunity.score.execution_cost_wei)
+                        * self.config.mev.eth_usd_price,
+                    competition_score: opportunity.score.competition_score as f64 / 100.0,
+                    confidence_score: opportunity.score.confidence_score as f64 / 100.0,
+                    urgency: (opportunity.age_ms() as f64
+                        / self.config.mev.max_pending_age_ms.max(1) as f64)
+                        .clamp(0.0, 1.0),
+                    recent_failures: feedback_metrics.bad_streak,
+                    tip_scaling_factor: adaptive_thresholds.tip_scaling_factor,
+                },
+                self.config.mev.eth_usd_price,
+            )
+        };
+        if !inclusion_plan.execute {
+            self.dashboard.event(
+                "info",
+                format!(
+                    "inclusion gate blocked victim={:?} adjusted_ev={:.4} prob={:.3} tip_usd={:.4}",
+                    opportunity.victim_tx,
+                    inclusion_plan.adjusted_ev_usd,
+                    inclusion_plan.inclusion_probability,
+                    inclusion_plan.tip_usd
+                ),
+            );
+            self.record_miss(MissReason::HighCompetition);
+            self.record_feedback(ExecutionFeedback {
+                success: false,
+                included: false,
+                profit_expected: wei_to_eth_f64(payload.expected_profit_wei)
+                    * self.config.mev.eth_usd_price,
+                profit_realized: 0.0,
+                gas_used: wei_to_eth_f64(opportunity.score.execution_cost_wei)
+                    * self.config.mev.eth_usd_price,
+                tip_used: inclusion_plan.tip_usd,
+                competition_score: opportunity.score.competition_score as f64 / 100.0,
+                confidence_score: opportunity.score.confidence_score as f64 / 100.0,
+                relay_used: self.config.flashbots_relay.clone(),
+                block_delay: 0,
+                failure_reason: Some(FailureReason::NotIncluded),
+            });
+            return Ok(());
+        }
         let wallet = self
             .config
             .sender_private_key
@@ -188,7 +252,14 @@ impl ExecutionEngine {
                 .get_transaction_count(wallet.address(), Some(BlockNumber::Pending.into()))
                 .await?;
             let gas_price = provider.get_gas_price().await?;
-            payload.tx = sign_executor_transaction(&wallet, &payload, nonce, gas_price).await?;
+            let tip_per_gas = if payload.gas_limit > 0 {
+                inclusion_plan.tip_wei / U256::from(payload.gas_limit)
+            } else {
+                U256::zero()
+            };
+            payload.tx =
+                sign_executor_transaction(&wallet, &payload, nonce, gas_price + tip_per_gas)
+                    .await?;
         }
         let relay_url = Url::parse(&self.config.flashbots_relay)?;
         let relay_signer = wallet.clone();
@@ -214,6 +285,20 @@ impl ExecutionEngine {
                 ),
             );
             self.record_miss(MissReason::SimulationFailed);
+            self.record_feedback(ExecutionFeedback {
+                success: false,
+                included: false,
+                profit_expected: payload.expected_profit,
+                profit_realized: 0.0,
+                gas_used: wei_to_eth_f64(opportunity.score.execution_cost_wei)
+                    * self.config.mev.eth_usd_price,
+                tip_used: inclusion_plan.tip_usd,
+                competition_score: opportunity.score.competition_score as f64 / 100.0,
+                confidence_score: opportunity.score.confidence_score as f64 / 100.0,
+                relay_used: self.config.flashbots_relay.clone(),
+                block_delay: 0,
+                failure_reason: Some(FailureReason::SimulationFailed),
+            });
             return Ok(());
         }
         let mut bundle = BundleRequest::new().set_block(block + 1);
@@ -254,6 +339,21 @@ impl ExecutionEngine {
                         success: true,
                     },
                 );
+                self.record_feedback(ExecutionFeedback {
+                    success: true,
+                    included: true,
+                    profit_expected: payload.expected_profit,
+                    profit_realized: wei_to_eth_f64(simulation.realized_profit_wei)
+                        * self.config.mev.eth_usd_price,
+                    gas_used: wei_to_eth_f64(opportunity.score.execution_cost_wei)
+                        * self.config.mev.eth_usd_price,
+                    tip_used: inclusion_plan.tip_usd,
+                    competition_score: opportunity.score.competition_score as f64 / 100.0,
+                    confidence_score: opportunity.score.confidence_score as f64 / 100.0,
+                    relay_used: self.config.flashbots_relay.clone(),
+                    block_delay: 0,
+                    failure_reason: None,
+                });
                 Ok(())
             }
             Err(err) => {
@@ -265,6 +365,20 @@ impl ExecutionEngine {
                         opportunity.victim_tx, err
                     ),
                 );
+                self.record_feedback(ExecutionFeedback {
+                    success: false,
+                    included: false,
+                    profit_expected: payload.expected_profit,
+                    profit_realized: 0.0,
+                    gas_used: wei_to_eth_f64(opportunity.score.execution_cost_wei)
+                        * self.config.mev.eth_usd_price,
+                    tip_used: inclusion_plan.tip_usd,
+                    competition_score: opportunity.score.competition_score as f64 / 100.0,
+                    confidence_score: opportunity.score.confidence_score as f64 / 100.0,
+                    relay_used: self.config.flashbots_relay.clone(),
+                    block_delay: 0,
+                    failure_reason: Some(FailureReason::RelayError),
+                });
                 Err(err.into())
             }
         }
@@ -277,6 +391,27 @@ impl ExecutionEngine {
         self.dashboard.event(
             "info",
             format!("missed_opportunity reason={}", reason.as_str()),
+        );
+    }
+
+    fn record_feedback(&self, feedback: ExecutionFeedback) {
+        let (metrics, thresholds) = {
+            let mut engine = self.feedback.lock().expect("feedback engine lock");
+            engine.record(feedback);
+            (engine.metrics(), engine.thresholds())
+        };
+        self.dashboard.event(
+            "info",
+            format!(
+                "feedback updated inclusion_rate={:.3} success_rate={:.3} expected_real={:.3} tip_eff={:.3} min_profit_x={:.2} tip_x={:.2} freq_x={:.2}",
+                metrics.inclusion_rate,
+                metrics.success_rate,
+                metrics.expected_vs_real_ratio,
+                metrics.tip_efficiency,
+                thresholds.min_profit_multiplier,
+                thresholds.tip_scaling_factor,
+                thresholds.execution_frequency_factor
+            ),
         );
     }
 }
