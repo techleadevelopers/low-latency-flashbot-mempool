@@ -1,24 +1,24 @@
 use crate::config::Config;
 use crate::mev::amm::uniswap_v2::{amount_out_exact_in, find_roi_optimal_input};
+use crate::mev::execution::contract_encoder::EncodedSwapStep;
+use crate::mev::execution::flashloan_builder::build_v2_flashswap_call;
 use crate::mev::opportunity::wei_to_eth_f64;
 use crate::mev::simulation::state_simulator::{AmmState, StateSimulator};
-use ethers::abi::{self, Token};
 use ethers::types::{Address, Bytes, U256};
-use std::time::{SystemTime, UNIX_EPOCH};
-
-const SWAP_EXACT_TOKENS_FOR_TOKENS: [u8; 4] = [0x38, 0xed, 0x17, 0x39];
 
 #[derive(Debug, Clone)]
 pub struct ExecutionPayload {
     pub tx: Bytes,
     pub calldata: Bytes,
-    pub router: Address,
+    pub target_contract: Address,
+    pub value: U256,
     pub amount_in: U256,
     pub min_amount_out: U256,
     pub expected_profit_wei: U256,
     pub simulated_profit_wei: U256,
     pub expected_profit: f64,
     pub gas_estimate: u64,
+    pub gas_limit: u64,
     pub price_impact_bps: u64,
     pub revert_risk: bool,
 }
@@ -26,6 +26,7 @@ pub struct ExecutionPayload {
 #[derive(Debug, Clone)]
 pub struct BackrunBuildInput {
     pub router: Address,
+    pub pair: Address,
     pub recipient: Address,
     pub token_in: Address,
     pub token_out: Address,
@@ -104,49 +105,39 @@ impl PayloadBuilder {
             ));
         }
 
-        let calldata = build_swap_exact_tokens_for_tokens_calldata(
+        let executor = config.mev.mev_executor.ok_or_else(|| {
+            "MEV_EXECUTOR_ADDRESS is required to build atomic payload".to_string()
+        })?;
+        let step = EncodedSwapStep {
+            router: input.router,
+            path: vec![input.token_out, input.token_in],
+            amount_in: U256::MAX,
+            min_out: min_amount_out,
+        };
+        let call = build_v2_flashswap_call(
+            executor,
+            input.pair,
+            input.token_out,
             amount_in,
-            min_amount_out,
-            &[input.token_out, input.token_in],
-            input.recipient,
+            min_profit_wei,
+            input.token_in,
+            &[step],
         );
 
         Ok(ExecutionPayload {
             tx: Bytes::new(),
-            calldata,
-            router: input.router,
+            calldata: call.calldata,
+            target_contract: call.target_contract,
+            value: U256::zero(),
             amount_in,
             min_amount_out,
             expected_profit_wei: simulated_profit_wei,
             simulated_profit_wei,
             expected_profit: wei_to_eth_f64(simulated_profit_wei),
             gas_estimate,
+            gas_limit: gas_estimate,
             price_impact_bps,
             revert_risk: false,
         })
     }
-}
-
-fn build_swap_exact_tokens_for_tokens_calldata(
-    amount_in: U256,
-    min_amount_out: U256,
-    path: &[Address],
-    recipient: Address,
-) -> Bytes {
-    let deadline = U256::from(
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_secs() + 60)
-            .unwrap_or(60),
-    );
-    let mut data = Vec::with_capacity(4 + 32 * 5);
-    data.extend_from_slice(&SWAP_EXACT_TOKENS_FOR_TOKENS);
-    data.extend(abi::encode(&[
-        Token::Uint(amount_in),
-        Token::Uint(min_amount_out),
-        Token::Array(path.iter().copied().map(Token::Address).collect()),
-        Token::Address(recipient),
-        Token::Uint(deadline),
-    ]));
-    Bytes::from(data)
 }
