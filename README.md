@@ -354,6 +354,7 @@ A trilha MEV agora contem os modulos exigidos para separar sinal de execucao:
 - `src/mev/execution/contract_encoder.rs`: ABI encoder para chamadas ao `MevExecutor`.
 - `src/mev/execution/flashloan_builder.rs`: builder de chamada `startV2FlashSwap(...)`.
 - `src/mev/execution/bundle_sender.rs`: helper de bundle privado com payload assinado.
+- `src/mev/inclusion.rs`: estrategia adaptativa de inclusao com tip dinamico, probabilidade de inclusao, ranking de relays e feedback de falhas.
 
 Politica estrita atual:
 
@@ -374,6 +375,10 @@ MEV_MAX_PRICE_IMPACT_BPS=250
 MEV_SLIPPAGE_PROTECTION_BPS=50
 MEV_EXECUTOR_ADDRESS=0xSEU_MEV_EXECUTOR_DEPLOYADO
 MEV_UNISWAP_V2_FACTORY=0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f
+MEV_BUILDER_RELAYS=https://relay.flashbots.net
+MEV_INCLUSION_MIN_EV_USD=1.0
+MEV_INCLUSION_BASE_TIP_BPS=800
+MEV_INCLUSION_MAX_TIP_BPS=3500
 ```
 
 O fluxo atomico V2 agora e:
@@ -385,7 +390,16 @@ O fluxo atomico V2 agora e:
 5. codificar chamada `MevExecutor.startV2FlashSwap(...)`
 6. assinar tx para `MEV_EXECUTOR_ADDRESS`
 7. executar preflight de bundle
-8. enviar bundle `[victim_tx, mev_executor_tx]`
+8. passar pelo inclusion gate: EV ajustado por probabilidade de inclusao precisa superar o minimo
+9. enviar bundle `[victim_tx, mev_executor_tx]`
+
+Inclusao adaptativa:
+
+- competicao alta aumenta tip
+- EV baixo corta tip de forma agressiva
+- relays sao priorizados por taxa de sucesso e latencia
+- bundle e bloqueado se `adjusted_ev = (profit - gas - tip) * inclusion_probability` ficar abaixo de `MEV_INCLUSION_MIN_EV_USD`
+- retries sao limitados por `MEV_INCLUSION_MAX_ATTEMPTS`
 
 O contrato garante lucro on-chain:
 
