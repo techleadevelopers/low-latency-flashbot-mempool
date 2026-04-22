@@ -1,7 +1,7 @@
 use crate::config::{BotMode, Config};
 use crate::dashboard::DashboardHandle;
-use crate::mev::capital::CapitalManager;
 use crate::mev::analytics::missed_opportunities::{MissReason, MissedOpportunityTracker};
+use crate::mev::capital::CapitalManager;
 use crate::mev::opportunity::{wei_to_eth_f64, MevOpportunity};
 use crate::mev::pnl::tracker::PnlTracker;
 use crate::mev::simulation::bundle_simulator::{BundleSimulationRequest, BundleSimulator};
@@ -277,8 +277,10 @@ impl ExecutionEngine {
         if let Ok(mut missed) = self.missed.lock() {
             missed.record(reason);
         }
-        self.dashboard
-            .event("info", format!("missed_opportunity reason={}", reason.as_str()));
+        self.dashboard.event(
+            "info",
+            format!("missed_opportunity reason={}", reason.as_str()),
+        );
     }
 }
 
