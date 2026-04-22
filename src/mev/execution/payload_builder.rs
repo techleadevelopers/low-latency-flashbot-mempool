@@ -86,13 +86,12 @@ impl PayloadBuilder {
         )
         .ok_or_else(|| "no ROI-positive trade size after gas".to_string())?;
 
-        let amount_out = amount_out_exact_in(amount_in, reserve_in, reserve_out, pool_after.fee_bps)
-            .ok_or_else(|| "backrun output quote failed".to_string())?;
-        let min_amount_out = amount_out
-            .saturating_mul(U256::from(
-                10_000u64.saturating_sub(config.mev.slippage_protection_bps),
-            ))
-            / U256::from(10_000u64);
+        let amount_out =
+            amount_out_exact_in(amount_in, reserve_in, reserve_out, pool_after.fee_bps)
+                .ok_or_else(|| "backrun output quote failed".to_string())?;
+        let min_amount_out = amount_out.saturating_mul(U256::from(
+            10_000u64.saturating_sub(config.mev.slippage_protection_bps),
+        )) / U256::from(10_000u64);
         let price_impact_bps = post_victim.slippage_impact_bps;
         let min_profit_wei = ethers::utils::parse_ether(config.mev.min_net_profit_eth.to_string())
             .map_err(|err| err.to_string())?;
