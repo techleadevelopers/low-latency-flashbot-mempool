@@ -69,6 +69,7 @@ pub async fn run(
     let mut stream = provider.subscribe_pending_txs().await?;
     let capital = Arc::new(Mutex::new(CapitalManager::from_config(&config.mev)?));
     let learning_runtime = LearningRuntime::new(&config);
+    let pending_learning = learning_runtime.clone();
     let executor = ExecutionEngine::new(
         config.clone(),
         rpc_fleet.clone(),
@@ -117,6 +118,7 @@ pub async fn run(
                 continue;
             }
         };
+        pending_learning.observe_pending_transaction(&tx);
         dashboard.record_latency(
             "mev_pending_lookup",
             lookup_started.elapsed().as_millis(),
