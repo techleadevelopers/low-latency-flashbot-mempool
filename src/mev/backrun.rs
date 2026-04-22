@@ -279,6 +279,7 @@ fn score_backrun(
         kind: OpportunityKind::Backrun,
         detected_at: Instant::now(),
         victim_tx: tx.hash,
+        victim_transaction: Some(tx.clone()),
         target: signal.router,
         input_token: signal.path[0],
         output_token: *signal.path.last()?,
@@ -335,6 +336,7 @@ async fn build_v2_payload_if_possible(
         config,
         BackrunBuildInput {
             router: signal.router,
+            pair,
             recipient,
             token_in,
             token_out,
