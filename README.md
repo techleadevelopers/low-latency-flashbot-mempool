@@ -338,3 +338,67 @@ O modo `live` e intencionalmente restritivo. Ele nao envia transacao publica por
 - Comecar com `MEV_MAX_DAILY_LOSS_ETH` e `MEV_MAX_GAS_SPEND_WINDOW_ETH` baixos.
 - Manter `MEV_ALLOW_PUBLIC_MEMPOOL=false`.
 - Subir `MEV_MIN_CONFIDENCE_SCORE` e baixar `MEV_MAX_COMPETITION_SCORE` quando houver muito ruido.
+
+## Upgrade deterministico de execucao
+
+A trilha MEV agora contem os modulos exigidos para separar sinal de execucao:
+
+- `src/mev/amm/uniswap_v2.rs`: math inteiro de Uniswap V2 com `x*y=k`, fee de 0,3%, atualizacao de reservas e impacto de preco.
+- `src/mev/amm/uniswap_v3.rs`: simulador de `sqrtPriceX96`, liquidez ativa e ticks inicializados para swaps exatos dentro/atraves de ranges.
+- `src/mev/simulation/state_simulator.rs`: aplica a transacao da vitima sobre o estado AMM e retorna estado pos-swap, preco efetivo e slippage.
+- `src/mev/execution/payload_builder.rs`: calcula tamanho dinamico por ROI, gera calldata real de router com `amountOutMin` e rejeita lucro/impacto/liquidez ruins.
+- `src/mev/simulation/bundle_simulator.rs`: preflight deterministico de bundle antes de envio. O live path recusa qualquer payload sem simulacao positiva.
+- `src/mev/pnl/tracker.rs`: estrutura `ExecutionResult` e reconciliacao por receipt: gas pago, tokens recebidos/gastos e lucro realizado.
+- `src/mev/analytics/missed_opportunities.rs`: `MissReason` para medir perdas por lucro baixo, competicao, simulacao, capital, latencia e payload/pool indisponivel.
+
+Politica estrita atual:
+
+- `live` nao envia sem `ExecutionPayload`.
+- `live` nao envia payload sem bytes assinados.
+- `live` nao envia sem `BundleSimulator::deterministic_preflight(...)` positivo.
+- fallback publico continua bloqueado salvo `MEV_ALLOW_PUBLIC_MEMPOOL=true`.
+
+Configuracao low-capital adicional:
+
+```env
+MEV_MIN_PROFIT_USD=2.0
+MEV_MAX_GAS_PER_TX=260000
+MEV_MAX_DAILY_LOSS_ETH=0.01
+MEV_MIN_CONFIDENCE_SCORE=80
+MEV_MAX_PRICE_IMPACT_BPS=250
+MEV_SLIPPAGE_PROTECTION_BPS=50
+MEV_UNISWAP_V2_FACTORY=0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f
+```
+
+Limite honesto: o builder ja gera calldata real e faz simulacao deterministica V2/V3, mas o projeto ainda nao tem contrato executor/flashloan especifico para assinar uma transacao atomicamente financiada. Por isso o live gate continua recusando payload sem signed tx. Isso e proposital: sem funding atomico, a operacao nao esta provada e nao deve ir para producao.
+
+### Analise critica restante
+
+Onde ainda perde dinheiro:
+
+- Se o pool mudar entre mempool detectado e builder inclusion, a simulacao local fica stale.
+- V3 em producao exige leitura completa e atualizada dos ticks relevantes; tick cache incompleto cria falso lucro.
+- Sem contrato executor/flashloan, muitos backruns nao sao financiaveis com baixo capital.
+- Bundle preflight local nao substitui relay/builder simulation assinada.
+
+Gargalos de latencia:
+
+- `eth_getTransactionByHash` em pending tx.
+- leitura de factory/pair/reserves por oportunidade.
+- tick loading V3 quando a rota cruza muitos ranges.
+- relay simulation antes do envio.
+
+Por que competidores ganham:
+
+- orderflow privado e hints de builders.
+- co-locacao e RPC dedicado.
+- cache local de pools/ticks em memoria.
+- searchers com contratos executores ja auditados e capital/flashloan routes melhores.
+
+Como reduzir risco:
+
+- manter cache local de reserves/ticks atualizado por logs.
+- usar relay simulation real alem do preflight local.
+- adicionar executor contract com callbacks de flashloan e asserts on-chain de lucro minimo.
+- exigir margem maior que gas variance e builder tip.
+- registrar todos os `MissReason` e ajustar thresholds por dados, nao por intuicao.
