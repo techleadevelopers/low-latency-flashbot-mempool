@@ -1,6 +1,8 @@
 use crate::config::{Config, MonitoredTokenConfig};
 use crate::dashboard::DashboardHandle;
+use crate::mev::amm::uniswap_v2::V2PoolState;
 use crate::mev::capital::CapitalManager;
+use crate::mev::execution::payload_builder::{BackrunBuildInput, PayloadBuilder};
 use crate::mev::execution::ExecutionEngine;
 use crate::mev::opportunity::{
     clamp_score, roi_bps, wei_to_eth_f64, MevOpportunity, OpportunityKind, OpportunityScore,
@@ -24,9 +26,26 @@ const SWAP_EXACT_TOKENS_FOR_ETH_SUPPORTING_FEE: [u8; 4] = [0x79, 0x1a, 0xc9, 0x4
 struct SwapSignal {
     selector: [u8; 4],
     amount_in: U256,
+    notional_wei: U256,
     path: Vec<Address>,
     router: Address,
 }
+
+ethers::contract::abigen!(
+    UniswapV2Factory,
+    r#"[
+        function getPair(address tokenA, address tokenB) external view returns (address pair)
+    ]"#,
+);
+
+ethers::contract::abigen!(
+    UniswapV2Pair,
+    r#"[
+        function token0() external view returns (address)
+        function token1() external view returns (address)
+        function getReserves() external view returns (uint112 reserve0, uint112 reserve1, uint32 blockTimestampLast)
+    ]"#,
+);
 
 pub async fn run(
     config: Arc<Config>,
@@ -89,7 +108,8 @@ pub async fn run(
             continue;
         }
 
-        let Some(opportunity) = score_backrun(signal, &tx, gas_price, &config, min_profit_wei)
+        let Some(mut opportunity) =
+            score_backrun(signal.clone(), &tx, gas_price, &config, min_profit_wei)
         else {
             continue;
         };
@@ -118,6 +138,29 @@ pub async fn run(
             continue;
         }
 
+        if let Some(payload) = build_v2_payload_if_possible(
+            provider.clone(),
+            signal,
+            gas_price,
+            &config,
+            opportunity.score.execution_cost_wei,
+        )
+        .await
+        {
+            opportunity.score.expected_profit_wei = payload.expected_profit_wei;
+            opportunity.score.slippage_adjusted_profit_wei = payload.simulated_profit_wei;
+            opportunity.execution_payload = Some(payload);
+        } else if matches!(config.bot_mode, crate::config::BotMode::Live) {
+            dashboard.event(
+                "info",
+                format!(
+                    "MEV backrun live rejected victim={:?}: no deterministic V2 payload",
+                    tx.hash
+                ),
+            );
+            continue;
+        }
+
         executor.handle(opportunity).await?;
     }
 
@@ -133,7 +176,7 @@ fn decode_large_swap(
     let router = tx.to?;
     let args = &tx.input.as_ref()[4..];
 
-    let signal = match selector {
+    let mut signal = match selector {
         SWAP_EXACT_ETH_FOR_TOKENS | SWAP_EXACT_ETH_FOR_TOKENS_SUPPORTING_FEE => {
             let decoded = abi::decode(
                 &[
@@ -148,6 +191,7 @@ fn decode_large_swap(
             SwapSignal {
                 selector,
                 amount_in: tx.value,
+                notional_wei: tx.value,
                 path: decoded.get(1).and_then(token_as_address_vec)?,
                 router,
             }
@@ -170,6 +214,7 @@ fn decode_large_swap(
             SwapSignal {
                 selector,
                 amount_in: decoded.first().and_then(token_as_uint)?,
+                notional_wei: U256::zero(),
                 path: decoded.get(2).and_then(token_as_address_vec)?,
                 router,
             }
@@ -182,10 +227,8 @@ fn decode_large_swap(
         return None;
     }
 
-    Some(SwapSignal {
-        amount_in: notional_wei,
-        ..signal
-    })
+    signal.notional_wei = notional_wei;
+    Some(signal)
 }
 
 fn score_backrun(
@@ -208,10 +251,10 @@ fn score_backrun(
         .saturating_mul(U256::from(config.mev.gas_safety_margin_bps))
         / U256::from(10_000u64);
 
-    let notional_eth = wei_to_eth_f64(signal.amount_in);
+    let notional_eth = wei_to_eth_f64(signal.notional_wei);
     let residual_edge_bps = residual_edge_bps(signal.selector, notional_eth);
     let gross_profit_wei = signal
-        .amount_in
+        .notional_wei
         .saturating_mul(U256::from(residual_edge_bps))
         / U256::from(10_000u64);
     let expected_profit_wei = gross_profit_wei.saturating_sub(execution_cost_wei);
@@ -239,7 +282,7 @@ fn score_backrun(
         target: signal.router,
         input_token: signal.path[0],
         output_token: *signal.path.last()?,
-        notional_wei: signal.amount_in,
+        notional_wei: signal.notional_wei,
         gas_limit,
         private_only: true,
         score: OpportunityScore {
@@ -253,6 +296,55 @@ fn score_backrun(
         },
         execution_payload: None,
     })
+}
+
+async fn build_v2_payload_if_possible(
+    provider: Arc<Provider<Ws>>,
+    signal: SwapSignal,
+    gas_price: U256,
+    config: &Config,
+    _estimated_cost_wei: U256,
+) -> Option<crate::mev::execution::payload_builder::ExecutionPayload> {
+    let factory = config.mev.uniswap_v2_factory?;
+    let recipient = config
+        .mev
+        .searcher_recipient
+        .unwrap_or(config.control_address);
+    let token_in = *signal.path.first()?;
+    let token_out = *signal.path.get(1)?;
+    let factory = UniswapV2Factory::new(factory, provider.clone());
+    let pair = factory.get_pair(token_in, token_out).call().await.ok()?;
+    if pair == Address::zero() {
+        return None;
+    }
+    let pair_contract = UniswapV2Pair::new(pair, provider.clone());
+    let token0 = pair_contract.token_0().call().await.ok()?;
+    let token1 = pair_contract.token_1().call().await.ok()?;
+    let reserves = pair_contract.get_reserves().call().await.ok()?;
+    let pool = V2PoolState {
+        pair,
+        token0,
+        token1,
+        reserve0: U256::from(reserves.0),
+        reserve1: U256::from(reserves.1),
+        fee_bps: 30,
+    };
+    let capital_available_wei =
+        ethers::utils::parse_ether(config.mev.capital_eth.to_string()).ok()?;
+    PayloadBuilder::build_backrun_v2(
+        config,
+        BackrunBuildInput {
+            router: signal.router,
+            recipient,
+            token_in,
+            token_out,
+            victim_amount_in: signal.amount_in,
+            state_before: crate::mev::simulation::state_simulator::AmmState::UniswapV2(pool),
+            capital_available_wei,
+            gas_price_wei: gas_price,
+        },
+    )
+    .ok()
 }
 
 fn estimate_notional_wei(
