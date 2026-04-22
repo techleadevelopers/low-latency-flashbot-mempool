@@ -73,6 +73,7 @@ contract MevExecutor {
     address public immutable owner;
     address public immutable profitRecipient;
     bool private locked;
+    address private activePair;
 
     event Profit(address indexed token, uint256 amount);
     event Execution(uint256 steps, uint256 finalBalance, uint256 repayAmount, uint256 minProfit);
@@ -135,12 +136,15 @@ contract MevExecutor {
         bytes memory data = abi.encode(
             FlashParams(pair, borrowToken, borrowAmount, minProfit, profitToken, steps)
         );
+        activePair = pair;
         IUniswapV2Pair(pair).swap(amount0Out, amount1Out, address(this), data);
+        activePair = address(0);
     }
 
     function uniswapV2Call(address, uint256 amount0, uint256 amount1, bytes calldata data) external {
         FlashParams memory params = abi.decode(data, (FlashParams));
         require(msg.sender == params.pair, "INVALID_CALLBACK");
+        require(msg.sender == activePair, "NO_ACTIVE_FLASH");
         uint256 borrowed = amount0 > 0 ? amount0 : amount1;
         require(borrowed == params.borrowAmount, "BORROW_MISMATCH");
 
