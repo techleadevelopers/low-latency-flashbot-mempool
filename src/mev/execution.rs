@@ -73,15 +73,27 @@ impl ExecutionEngine {
                 self.dashboard.event(
                     "info",
                     format!(
-                        "shadow MEV accepted kind={} victim={:?} profit={:.6} ETH roi={}bps confidence={} risk={} competition={} allocation={:.6} ETH",
-                        opportunity.kind.as_str(),
-                        opportunity.victim_tx,
-                        wei_to_eth_f64(opportunity.score.slippage_adjusted_profit_wei),
+                    "shadow MEV accepted kind={} victim={:?} profit={:.6} ETH roi={}bps confidence={} risk={} competition={} allocation={:.6} ETH",
+                    opportunity.kind.as_str(),
+                    opportunity.victim_tx,
+                    wei_to_eth_f64(opportunity.score.slippage_adjusted_profit_wei),
                         opportunity.score.roi_bps,
                         opportunity.score.confidence_score,
                         opportunity.score.risk_score,
                         opportunity.score.competition_score,
                         wei_to_eth_f64(decision.allocation_wei)
+                ),
+            );
+                self.dashboard.event(
+                    "info",
+                    format!(
+                        "shadow MEV route id={} router={:?} in={:?} out={:?} gas_limit={} gross_expected={:.6} ETH",
+                        opportunity.id,
+                        opportunity.target,
+                        opportunity.input_token,
+                        opportunity.output_token,
+                        opportunity.gas_limit,
+                        wei_to_eth_f64(opportunity.score.expected_profit_wei)
                     ),
                 );
                 Ok(())
