@@ -2,11 +2,17 @@ pub mod amm;
 pub mod analytics;
 pub mod backrun;
 pub mod capital;
+pub mod competition;
 pub mod execution;
+pub mod feedback;
+pub mod inclusion;
+pub mod inclusion_truth;
 pub mod meta_decision;
 pub mod opportunity;
 pub mod pnl;
+pub mod post_block;
 pub mod simulation;
+pub mod tip_discovery;
 
 use crate::config::{Config, MevStrategy};
 use crate::dashboard::DashboardHandle;
