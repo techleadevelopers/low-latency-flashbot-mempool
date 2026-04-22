@@ -87,10 +87,7 @@ async fn start_delegation_guardian(
 
                 // Usa o sponsor wallet do config
                 let sponsor_key = &config.sender_private_key;
-                let rpc_url = match rpc_fleet.send_endpoint().url {
-                    Some(url) => url,
-                    None => "https://arb1.arbitrum.io/rpc".to_string(),
-                };
+                let rpc_url = rpc_fleet.send_endpoint().url;
 
                 let status = std::process::Command::new("cargo")
                     .args(&[
