@@ -36,6 +36,37 @@ pub struct CompetitionIntelligence {
     capacity: usize,
 }
 
+pub struct CompetitionModel {
+    inner: std::sync::Mutex<CompetitionIntelligence>,
+}
+
+impl CompetitionModel {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            inner: std::sync::Mutex::new(CompetitionIntelligence::new(capacity)),
+        }
+    }
+
+    pub fn observe_tx(&self, tx: MempoolTxFeature) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.observe_tx(tx);
+        }
+    }
+
+    pub fn snapshot(&self, pool: Address, selector: [u8; 4]) -> CompetitionSnapshot {
+        self.inner
+            .lock()
+            .map(|inner| inner.snapshot(pool, selector))
+            .unwrap_or(CompetitionSnapshot {
+                mempool_density: 0.0,
+                similar_tx_count: 0,
+                pool_activity_spike: 0.0,
+                historical_outbid_rate: 0.20,
+                competition_probability: 0.20,
+            })
+    }
+}
+
 impl CompetitionIntelligence {
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -75,12 +106,16 @@ impl CompetitionIntelligence {
         }
         let mempool_density = (density as f64 / self.capacity.max(1) as f64).clamp(0.0, 1.0);
         let similar_factor = (similar as f64 / 12.0).clamp(0.0, 1.0);
-        let activity = self.pool_activity.get(&pool).copied().unwrap_or(PoolActivity {
-            pool,
-            swaps_last_block: 0,
-            swaps_last_minute: 0,
-            avg_notional_eth: 0.0,
-        });
+        let activity = self
+            .pool_activity
+            .get(&pool)
+            .copied()
+            .unwrap_or(PoolActivity {
+                pool,
+                swaps_last_block: 0,
+                swaps_last_minute: 0,
+                avg_notional_eth: 0.0,
+            });
         let pool_activity_spike = (activity.swaps_last_block as f64 / 4.0
             + activity.swaps_last_minute as f64 / 80.0)
             .clamp(0.0, 1.0);
