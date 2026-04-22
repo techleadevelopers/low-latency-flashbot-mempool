@@ -273,3 +273,68 @@ Limitacao atual:
 - o envio efetivo atual fica restrito a `swapExactETHForTokens`
 - swaps com input ERC-20 ainda exigem saldo e approvals dedicados do bot
 - nao existe heuristica de lucro on-chain acoplada nessa trilha generica
+
+## MEV engine low-capital
+
+O projeto agora tambem tem uma trilha separada de MEV low-capital em `src/mev/`.
+Ela reaproveita:
+
+- runtime Rust/Tokio
+- `RpcFleet` com roteamento por latencia e failover
+- modos `shadow`, `paper` e `live`
+- dashboard/eventos/telemetria
+- provider WebSocket do mempool
+- Flashbots relay como caminho privado
+
+Estrutura:
+
+- `src/mev/backrun.rs`: estrategia inicial, ultra-filtrada, para detectar swaps grandes e candidatos de backrun
+- `src/mev/opportunity.rs`: score estrito de lucro, custo, ROI, risco, competicao e confianca
+- `src/mev/capital.rs`: capital atual, PnL diario, drawdown, stop-loss, cooldown e limite de gas por janela
+- `src/mev/execution.rs`: executor para `shadow`, `paper` e `live`
+
+Ativacao conservadora:
+
+```env
+MEV_ENGINE_ENABLED=true
+MEV_STRATEGY=backrun
+BOT_MODE=shadow
+ALLOW_SEND=false
+MEV_ALLOW_PUBLIC_MEMPOOL=false
+```
+
+Exemplo completo: `.env.mev-low-capital.example`.
+
+### Gates de oportunidade
+
+Uma oportunidade so passa se todos os filtros forem verdadeiros:
+
+- lucro liquido ajustado por slippage >= `MEV_MIN_NET_PROFIT_ETH`
+- ROI >= `MEV_MIN_ROI_BPS`
+- risco <= `MEV_MAX_RISK_SCORE`
+- competicao <= `MEV_MAX_COMPETITION_SCORE`
+- confianca >= `MEV_MIN_CONFIDENCE_SCORE`
+- idade da pending tx <= `MEV_MAX_PENDING_AGE_MS`
+- capital manager aprova alocacao, gas, cooldown e stop-loss
+
+### Comportamento live
+
+O modo `live` e intencionalmente restritivo. Ele nao envia transacao publica por padrao e bloqueia qualquer oportunidade sem `execution_payload` assinado. Isso evita que uma heuristica incompleta queime gas real. Para producao, o proximo passo e acoplar um construtor de payload de backrun com simulacao de estado pos-swap e validacao via relay/sim antes de anexar o payload ao `MevOpportunity`.
+
+### Onde esse sistema perde dinheiro
+
+- A heuristica atual de edge e conservadora, mas nao substitui simulacao real de pools. Sem simulacao, o sistema pode superestimar residual arbitrage.
+- Competidores com orderflow privado, builders melhores e colocacao mais rapida vencem backruns obvios.
+- Swaps grandes demais atraem competicao. O score penaliza isso, mas nao mede o mempool inteiro nem o builder market em tempo real.
+- Tokens sem preco configurado em `MONITORED_TOKENS_*` sao ignorados para evitar falso notional.
+- Gas repricing entre deteccao e envio pode transformar lucro pequeno em perda.
+- `paper` nao prova fill real; ele so exercita gates, capital e telemetria.
+
+### Como reduzir risco antes de live
+
+- Rodar `shadow` por varios dias e comparar oportunidades detectadas contra estado de pools historico.
+- Implementar simulacao pos-swap por pool/router especifico antes de gerar payload.
+- Exigir bundle simulation positiva antes de `send_bundle`.
+- Comecar com `MEV_MAX_DAILY_LOSS_ETH` e `MEV_MAX_GAS_SPEND_WINDOW_ETH` baixos.
+- Manter `MEV_ALLOW_PUBLIC_MEMPOOL=false`.
+- Subir `MEV_MIN_CONFIDENCE_SCORE` e baixar `MEV_MAX_COMPETITION_SCORE` quando houver muito ruido.
