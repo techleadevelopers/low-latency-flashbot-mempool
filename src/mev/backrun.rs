@@ -1,6 +1,7 @@
 use crate::config::{Config, MonitoredTokenConfig};
 use crate::dashboard::DashboardHandle;
 use crate::mev::amm::uniswap_v2::V2PoolState;
+use crate::mev::block_loop::LearningRuntime;
 use crate::mev::capital::CapitalManager;
 use crate::mev::execution::payload_builder::{BackrunBuildInput, PayloadBuilder};
 use crate::mev::execution::ExecutionEngine;
@@ -67,7 +68,26 @@ pub async fn run(
     let provider = Arc::new(Provider::new(ws));
     let mut stream = provider.subscribe_pending_txs().await?;
     let capital = Arc::new(Mutex::new(CapitalManager::from_config(&config.mev)?));
-    let executor = ExecutionEngine::new(config.clone(), rpc_fleet, dashboard.clone(), capital);
+    let learning_runtime = LearningRuntime::new(&config);
+    let executor = ExecutionEngine::new(
+        config.clone(),
+        rpc_fleet.clone(),
+        dashboard.clone(),
+        capital,
+    )
+    .with_learning_runtime(learning_runtime.clone());
+    let loop_config = config.clone();
+    let loop_fleet = rpc_fleet.clone();
+    let loop_dashboard = dashboard.clone();
+    tokio::spawn(async move {
+        crate::mev::block_loop::run_block_loop(
+            learning_runtime,
+            loop_config,
+            loop_fleet,
+            loop_dashboard,
+        )
+        .await;
+    });
     let meta_engine = MetaDecisionEngine::new(MetaDecisionConfig {
         profit_multiplier: 1.8,
         max_price_impact: config.mev.max_price_impact_bps as f64 / 10_000.0,
