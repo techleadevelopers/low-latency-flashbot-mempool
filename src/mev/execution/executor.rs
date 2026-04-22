@@ -172,6 +172,23 @@ impl ExecutionEngine {
             return Ok(());
         }
 
+        if self
+            .learning
+            .as_ref()
+            .map(|learning| learning.survival_mode())
+            .unwrap_or(false)
+        {
+            self.dashboard.event(
+                "warn",
+                format!(
+                    "live MEV blocked victim={:?}: survival mode active",
+                    opportunity.victim_tx
+                ),
+            );
+            self.record_miss(MissReason::CapitalLimit);
+            return Ok(());
+        }
+
         if !opportunity.private_only && !self.config.mev.allow_public_mempool {
             self.dashboard.event(
                 "warn",
@@ -207,21 +224,107 @@ impl ExecutionEngine {
             .lock()
             .expect("feedback engine lock")
             .metrics();
+        let pressure = self.learning.as_ref().and_then(|learning| {
+            learning
+                .pressure()
+                .lock()
+                .ok()
+                .map(|pressure| pressure.pressure(opportunity.target))
+        });
+        let forecast = self.learning.as_ref().map(|learning| {
+            learning.competition_forecast(
+                opportunity.target,
+                opportunity.input_token,
+                opportunity.output_token,
+                opportunity
+                    .victim_transaction
+                    .as_ref()
+                    .and_then(tx_selector)
+                    .unwrap_or([0u8; 4]),
+            )
+        });
+        if let (Some(learning), Some(forecast)) = (&self.learning, forecast) {
+            if let Ok(mut pressure) = learning.pressure().lock() {
+                pressure.record_forecast(opportunity.target, forecast);
+            }
+        }
+        let pressure_tip_factor = pressure
+            .map(|pressure| 1.0 + pressure.heat * 0.65 + pressure.mempool_congestion * 0.25)
+            .unwrap_or(1.0);
+        let forecast_tip_factor = forecast
+            .map(|forecast| forecast.tip_multiplier)
+            .unwrap_or(1.0);
+        let pressure_frequency_factor = pressure
+            .map(|pressure| pressure.execution_frequency_factor)
+            .unwrap_or(1.0);
+        let expected_profit_usd =
+            wei_to_eth_f64(payload.expected_profit_wei) * self.config.mev.eth_usd_price;
+        let gas_cost_usd =
+            wei_to_eth_f64(opportunity.score.execution_cost_wei) * self.config.mev.eth_usd_price;
+        let forecast_probability = forecast
+            .map(|forecast| forecast.pressure_probability)
+            .unwrap_or(opportunity.score.competition_score as f64 / 100.0);
+        let selectivity_multiplier = pressure
+            .map(|pressure| pressure.selectivity_multiplier)
+            .unwrap_or(1.0);
+        let predicted_ev_usd =
+            (expected_profit_usd - gas_cost_usd) * (1.0 - forecast_probability * 0.55);
+        let adjusted_min_ev_usd = self.config.mev.inclusion_min_ev_usd * selectivity_multiplier;
+        if forecast
+            .map(|forecast| forecast.likely_outbid)
+            .unwrap_or(false)
+            && predicted_ev_usd < adjusted_min_ev_usd * 1.6
+        {
+            self.dashboard.event(
+                "info",
+                format!(
+                    "predictive competition blocked victim={:?} likely_outbid=true predicted_ev={:.4} min_ev={:.4}",
+                    opportunity.victim_tx, predicted_ev_usd, adjusted_min_ev_usd
+                ),
+            );
+            self.record_miss(MissReason::HighCompetition);
+            return Ok(());
+        }
+        if predicted_ev_usd < adjusted_min_ev_usd {
+            self.dashboard.event(
+                "info",
+                format!(
+                    "predictive EV blocked victim={:?} predicted_ev={:.4} min_ev={:.4} pressure={:.3}",
+                    opportunity.victim_tx, predicted_ev_usd, adjusted_min_ev_usd, forecast_probability
+                ),
+            );
+            self.record_miss(MissReason::HighCompetition);
+            return Ok(());
+        }
+        if pressure_frequency_factor < 0.25
+            && opportunity.score.confidence_score < self.config.mev.min_confidence_score + 10
+        {
+            self.dashboard.event(
+                "info",
+                format!(
+                    "competition pressure blocked victim={:?} pressure_freq={:.3}",
+                    opportunity.victim_tx, pressure_frequency_factor
+                ),
+            );
+            self.record_miss(MissReason::HighCompetition);
+            return Ok(());
+        }
         let inclusion_plan = {
             let inclusion = self.inclusion.lock().expect("inclusion engine lock");
             inclusion.plan(
                 InclusionContext {
-                    expected_profit_usd: wei_to_eth_f64(payload.expected_profit_wei)
-                        * self.config.mev.eth_usd_price,
-                    gas_cost_usd: wei_to_eth_f64(opportunity.score.execution_cost_wei)
-                        * self.config.mev.eth_usd_price,
-                    competition_score: opportunity.score.competition_score as f64 / 100.0,
+                    expected_profit_usd,
+                    gas_cost_usd,
+                    competition_score: forecast_probability
+                        .max(opportunity.score.competition_score as f64 / 100.0),
                     confidence_score: opportunity.score.confidence_score as f64 / 100.0,
                     urgency: (opportunity.age_ms() as f64
                         / self.config.mev.max_pending_age_ms.max(1) as f64)
                         .clamp(0.0, 1.0),
                     recent_failures: feedback_metrics.bad_streak,
-                    tip_scaling_factor: adaptive_thresholds.tip_scaling_factor,
+                    tip_scaling_factor: adaptive_thresholds.tip_scaling_factor
+                        * pressure_tip_factor
+                        * forecast_tip_factor,
                 },
                 self.config.mev.eth_usd_price,
             )
@@ -459,6 +562,11 @@ impl ExecutionEngine {
 
 fn signed_tx_hash(raw: &Bytes) -> H256 {
     H256::from(ethers::utils::keccak256(raw.as_ref()))
+}
+
+fn tx_selector(tx: &Transaction) -> Option<[u8; 4]> {
+    let input = tx.input.as_ref();
+    (input.len() >= 4).then(|| [input[0], input[1], input[2], input[3]])
 }
 
 async fn sign_executor_transaction(
