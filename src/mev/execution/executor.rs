@@ -8,6 +8,7 @@ use crate::mev::simulation::bundle_simulator::{BundleSimulationRequest, BundleSi
 use crate::rpc::RpcFleet;
 use ethers::prelude::*;
 use ethers::types::transaction::eip2718::TypedTransaction;
+use ethers::types::transaction::eip2718::TypedTransaction;
 use ethers_flashbots::{BundleRequest, FlashbotsMiddleware};
 use std::sync::{Arc, Mutex};
 use tracing::warn;
@@ -164,7 +165,7 @@ impl ExecutionEngine {
             return Ok(());
         }
 
-        let Some(payload) = opportunity.execution_payload.clone() else {
+        let Some(mut payload) = opportunity.execution_payload.clone() else {
             self.dashboard.event(
                 "warn",
                 format!(
@@ -176,18 +177,6 @@ impl ExecutionEngine {
             return Ok(());
         };
 
-        if payload.tx.0.is_empty() {
-            self.dashboard.event(
-                "warn",
-                format!(
-                    "live MEV blocked victim={:?}: payload has no signed tx bytes",
-                    opportunity.victim_tx
-                ),
-            );
-            self.record_miss(MissReason::PayloadUnavailable);
-            return Ok(());
-        }
-
         let endpoint = self.rpc_fleet.send_endpoint();
         let provider = endpoint.provider.clone();
         let wallet = self
@@ -195,6 +184,13 @@ impl ExecutionEngine {
             .sender_private_key
             .parse::<LocalWallet>()?
             .with_chain_id(self.config.chain_id);
+        if payload.tx.0.is_empty() {
+            let nonce = provider
+                .get_transaction_count(wallet.address(), Some(BlockNumber::Pending.into()))
+                .await?;
+            let gas_price = provider.get_gas_price().await?;
+            payload.tx = sign_executor_transaction(&wallet, &payload, nonce, gas_price).await?;
+        }
         let relay_url = Url::parse(&self.config.flashbots_relay)?;
         let relay_signer = wallet.clone();
         let flashbots_client = SignerMiddleware::new(provider.clone(), wallet);
@@ -221,9 +217,11 @@ impl ExecutionEngine {
             self.record_miss(MissReason::SimulationFailed);
             return Ok(());
         }
-        let bundle = BundleRequest::new()
-            .set_block(block + 1)
-            .push_transaction(payload.tx.clone());
+        let mut bundle = BundleRequest::new().set_block(block + 1);
+        if let Some(victim) = opportunity.victim_transaction.clone() {
+            bundle = bundle.push_revertible_transaction(victim);
+        }
+        bundle = bundle.push_transaction(payload.tx.clone());
 
         {
             let mut capital = self.capital.lock().expect("capital manager lock");
@@ -282,6 +280,25 @@ impl ExecutionEngine {
             format!("missed_opportunity reason={}", reason.as_str()),
         );
     }
+}
+
+async fn sign_executor_transaction(
+    wallet: &LocalWallet,
+    payload: &crate::mev::execution::payload_builder::ExecutionPayload,
+    nonce: U256,
+    gas_price: U256,
+) -> Result<Bytes, Box<dyn std::error::Error>> {
+    let tx: TypedTransaction = TransactionRequest::new()
+        .to(payload.target_contract)
+        .data(payload.calldata.clone())
+        .value(payload.value)
+        .gas(payload.gas_limit)
+        .gas_price(gas_price)
+        .nonce(nonce)
+        .from(wallet.address())
+        .into();
+    let signature = wallet.sign_transaction(&tx).await?;
+    Ok(tx.rlp_signed(&signature))
 }
 
 #[allow(dead_code)]
