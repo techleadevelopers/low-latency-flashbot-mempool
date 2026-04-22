@@ -4,6 +4,9 @@ use crate::mev::amm::uniswap_v2::V2PoolState;
 use crate::mev::capital::CapitalManager;
 use crate::mev::execution::payload_builder::{BackrunBuildInput, PayloadBuilder};
 use crate::mev::execution::ExecutionEngine;
+use crate::mev::meta_decision::{
+    MetaDecision, MetaDecisionConfig, MetaDecisionEngine, MetaOpportunity,
+};
 use crate::mev::opportunity::{
     clamp_score, roi_bps, wei_to_eth_f64, MevOpportunity, OpportunityKind, OpportunityScore,
 };
@@ -65,6 +68,16 @@ pub async fn run(
     let mut stream = provider.subscribe_pending_txs().await?;
     let capital = Arc::new(Mutex::new(CapitalManager::from_config(&config.mev)?));
     let executor = ExecutionEngine::new(config.clone(), rpc_fleet, dashboard.clone(), capital);
+    let meta_engine = MetaDecisionEngine::new(MetaDecisionConfig {
+        profit_multiplier: 1.8,
+        max_price_impact: config.mev.max_price_impact_bps as f64 / 10_000.0,
+        min_liquidity: config.mev.min_liquidity_eth,
+        max_slippage: config.mev.slippage_protection_bps as f64 / 10_000.0,
+        max_competition_threshold: config.mev.max_competition_score as f64 / 100.0,
+        min_real_profit: config.mev.min_profit_usd,
+        execution_threshold: config.mev.min_confidence_score as f64 / 100.0,
+        ..MetaDecisionConfig::default()
+    });
 
     dashboard.event(
         "info",
@@ -136,6 +149,64 @@ pub async fn run(
                 );
             }
             continue;
+        }
+
+        let meta_opportunity = MetaOpportunity {
+            expected_profit: wei_to_eth_f64(opportunity.score.slippage_adjusted_profit_wei)
+                * config.mev.eth_usd_price,
+            gas_cost: wei_to_eth_f64(opportunity.score.execution_cost_wei)
+                * config.mev.eth_usd_price,
+            slippage_estimate: config.mev.slippage_protection_bps as f64 / 10_000.0,
+            price_impact: opportunity.score.risk_score as f64 / 10_000.0,
+            liquidity_depth: wei_to_eth_f64(signal.notional_wei) * config.mev.eth_usd_price,
+            latency_estimate_ms: lookup_started.elapsed().as_secs_f64() * 1_000.0,
+            pool_address: signal.router,
+            victim_tx_hash: Some(tx.hash),
+            mempool_density: (opportunity.score.competition_score as f64 / 100.0).min(1.0),
+            tx_popularity: if wei_to_eth_f64(signal.notional_wei) >= 250.0 {
+                0.8
+            } else {
+                0.35
+            },
+            pool_activity_recent: (opportunity.score.risk_score as f64 / 100.0).min(1.0),
+            historical_failure_rate: 0.10,
+            block_delay_ms: 0.0,
+            simulation_age_ms: opportunity.age_ms() as f64,
+            victim_confirmed_or_replaced: false,
+            capital_gas_window_remaining: config.mev.max_gas_spend_window_eth
+                * config.mev.eth_usd_price,
+            daily_drawdown_remaining: config.mev.max_daily_loss_eth * config.mev.eth_usd_price,
+            trade_allocation_remaining: config.mev.capital_eth
+                * (config.mev.max_allocation_bps as f64 / 10_000.0)
+                * config.mev.eth_usd_price,
+        };
+        match meta_engine.decide(meta_opportunity) {
+            MetaDecision::Execute { score, .. } => {
+                if config.hot_path_info_events {
+                    dashboard.event(
+                        "info",
+                        format!(
+                            "meta gate accepted victim={:?} ev={:.4} confidence={:.3} competition={:.3} realistic_profit={:.4}",
+                            tx.hash,
+                            score.expected_value,
+                            score.confidence_score,
+                            score.competition_score,
+                            score.realistic_profit
+                        ),
+                    );
+                }
+            }
+            MetaDecision::Skip(reason) => {
+                dashboard.event(
+                    "info",
+                    format!(
+                        "meta gate skipped victim={:?} reason={}",
+                        tx.hash,
+                        reason.as_str()
+                    ),
+                );
+                continue;
+            }
         }
 
         if let Some(payload) = build_v2_payload_if_possible(
