@@ -85,6 +85,42 @@ pub struct Config {
     pub mempool_ws_url: Option<String>,
     pub frontrun_slippage_bps: u64,
     pub frontrun_gas_bump_bps: u64,
+    pub mev: MevConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct MevConfig {
+    pub enabled: bool,
+    pub strategy: MevStrategy,
+    pub capital_eth: f64,
+    pub min_net_profit_eth: f64,
+    pub min_roi_bps: u64,
+    pub min_large_swap_eth: f64,
+    pub max_risk_score: u16,
+    pub min_confidence_score: u16,
+    pub max_competition_score: u16,
+    pub max_daily_loss_eth: f64,
+    pub max_gas_spend_window_eth: f64,
+    pub gas_spend_window_secs: u64,
+    pub max_allocation_bps: u64,
+    pub gas_safety_margin_bps: u64,
+    pub execution_cooldown_ms: u64,
+    pub allow_public_mempool: bool,
+    pub max_pending_age_ms: u64,
+    pub paper_fill_probability_bps: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MevStrategy {
+    Backrun,
+}
+
+impl MevStrategy {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            MevStrategy::Backrun => "backrun",
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -425,6 +461,66 @@ impl Config {
         let frontrun_gas_bump_bps = env::var("FRONTRUN_GAS_BUMP_BPS")
             .unwrap_or_else(|_| "11000".to_string())
             .parse::<u64>()?;
+        let mev = MevConfig {
+            enabled: env::var("MEV_ENGINE_ENABLED")
+                .unwrap_or_else(|_| "false".to_string())
+                .trim()
+                .eq_ignore_ascii_case("true"),
+            strategy: parse_mev_strategy(
+                env::var("MEV_STRATEGY")
+                    .unwrap_or_else(|_| "backrun".to_string())
+                    .trim(),
+            )?,
+            capital_eth: env::var("MEV_CAPITAL_ETH")
+                .unwrap_or_else(|_| "0.05".to_string())
+                .parse::<f64>()?,
+            min_net_profit_eth: env::var("MEV_MIN_NET_PROFIT_ETH")
+                .unwrap_or_else(|_| "0.0025".to_string())
+                .parse::<f64>()?,
+            min_roi_bps: env::var("MEV_MIN_ROI_BPS")
+                .unwrap_or_else(|_| "1500".to_string())
+                .parse::<u64>()?,
+            min_large_swap_eth: env::var("MEV_MIN_LARGE_SWAP_ETH")
+                .unwrap_or_else(|_| "25.0".to_string())
+                .parse::<f64>()?,
+            max_risk_score: env::var("MEV_MAX_RISK_SCORE")
+                .unwrap_or_else(|_| "30".to_string())
+                .parse::<u16>()?,
+            min_confidence_score: env::var("MEV_MIN_CONFIDENCE_SCORE")
+                .unwrap_or_else(|_| "80".to_string())
+                .parse::<u16>()?,
+            max_competition_score: env::var("MEV_MAX_COMPETITION_SCORE")
+                .unwrap_or_else(|_| "25".to_string())
+                .parse::<u16>()?,
+            max_daily_loss_eth: env::var("MEV_MAX_DAILY_LOSS_ETH")
+                .unwrap_or_else(|_| "0.01".to_string())
+                .parse::<f64>()?,
+            max_gas_spend_window_eth: env::var("MEV_MAX_GAS_SPEND_WINDOW_ETH")
+                .unwrap_or_else(|_| "0.003".to_string())
+                .parse::<f64>()?,
+            gas_spend_window_secs: env::var("MEV_GAS_SPEND_WINDOW_SECS")
+                .unwrap_or_else(|_| "900".to_string())
+                .parse::<u64>()?,
+            max_allocation_bps: env::var("MEV_MAX_ALLOCATION_BPS")
+                .unwrap_or_else(|_| "2500".to_string())
+                .parse::<u64>()?,
+            gas_safety_margin_bps: env::var("MEV_GAS_SAFETY_MARGIN_BPS")
+                .unwrap_or_else(|_| "12500".to_string())
+                .parse::<u64>()?,
+            execution_cooldown_ms: env::var("MEV_EXECUTION_COOLDOWN_MS")
+                .unwrap_or_else(|_| "30000".to_string())
+                .parse::<u64>()?,
+            allow_public_mempool: env::var("MEV_ALLOW_PUBLIC_MEMPOOL")
+                .unwrap_or_else(|_| "false".to_string())
+                .trim()
+                .eq_ignore_ascii_case("true"),
+            max_pending_age_ms: env::var("MEV_MAX_PENDING_AGE_MS")
+                .unwrap_or_else(|_| "1500".to_string())
+                .parse::<u64>()?,
+            paper_fill_probability_bps: env::var("MEV_PAPER_FILL_PROBABILITY_BPS")
+                .unwrap_or_else(|_| "6500".to_string())
+                .parse::<u64>()?,
+        };
 
         let mut infura_ids = Vec::new();
         for idx in 1..=10 {
@@ -499,6 +595,7 @@ impl Config {
             mempool_ws_url,
             frontrun_slippage_bps,
             frontrun_gas_bump_bps,
+            mev,
         })
     }
 
@@ -568,6 +665,16 @@ impl Config {
         println!("Mempool Monitor: {}", self.enable_mempool_monitor);
         println!("Frontrun slippage bps: {}", self.frontrun_slippage_bps);
         println!("Frontrun gas bump bps: {}", self.frontrun_gas_bump_bps);
+        println!(
+            "MEV Engine: enabled={} strategy={} capital={} min_profit={} min_roi={} max_risk={} min_confidence={}",
+            self.mev.enabled,
+            self.mev.strategy.as_str(),
+            self.mev.capital_eth,
+            self.mev.min_net_profit_eth,
+            self.mev.min_roi_bps,
+            self.mev.max_risk_score,
+            self.mev.min_confidence_score
+        );
         println!("===============================================");
     }
 
@@ -709,6 +816,13 @@ fn parse_rpc_preference(value: &str) -> Result<RpcPreference, Box<dyn std::error
         "alchemy" => Ok(RpcPreference::Alchemy),
         "infura" => Ok(RpcPreference::Infura),
         other => Err(format!("unsupported RPC preference: {other}").into()),
+    }
+}
+
+fn parse_mev_strategy(value: &str) -> Result<MevStrategy, Box<dyn std::error::Error>> {
+    match value.trim().to_lowercase().as_str() {
+        "backrun" => Ok(MevStrategy::Backrun),
+        other => Err(format!("unsupported MEV_STRATEGY: {other}").into()),
     }
 }
 
