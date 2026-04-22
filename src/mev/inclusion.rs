@@ -17,6 +17,7 @@ pub struct RelayStats {
     pub outbids: u64,
     pub reverts: u64,
     pub avg_latency_ms: f64,
+    pub avg_required_tip_usd: f64,
 }
 
 impl Default for RelayStats {
@@ -28,6 +29,7 @@ impl Default for RelayStats {
             outbids: 0,
             reverts: 0,
             avg_latency_ms: 120.0,
+            avg_required_tip_usd: 0.0,
         }
     }
 }
@@ -173,6 +175,20 @@ impl InclusionEngine {
         }
     }
 
+    pub fn record_success_with_tip(&mut self, idx: usize, latency: Duration, tip_usd: f64) {
+        if let Some(relay) = self.relays.get_mut(idx) {
+            relay.stats.attempts = relay.stats.attempts.saturating_add(1);
+            relay.stats.successes = relay.stats.successes.saturating_add(1);
+            relay.stats.avg_latency_ms =
+                ewma(relay.stats.avg_latency_ms, latency.as_secs_f64() * 1_000.0);
+            relay.stats.avg_required_tip_usd = if relay.stats.avg_required_tip_usd == 0.0 {
+                tip_usd
+            } else {
+                ewma_with_alpha(relay.stats.avg_required_tip_usd, tip_usd, 0.20)
+            };
+        }
+    }
+
     pub fn record_failure(
         &mut self,
         idx: usize,
@@ -260,6 +276,10 @@ fn relay_performance(stats: RelayStats) -> f64 {
 #[inline(always)]
 fn ewma(previous: f64, current: f64) -> f64 {
     previous * 0.75 + current * 0.25
+}
+
+fn ewma_with_alpha(previous: f64, current: f64, alpha: f64) -> f64 {
+    previous * (1.0 - alpha) + current * alpha
 }
 
 #[cfg(test)]
