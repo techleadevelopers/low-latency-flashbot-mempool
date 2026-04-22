@@ -183,9 +183,11 @@ impl InclusionTruthEngine {
 }
 
 fn likely_outbid(record: &PendingBundleRecord, competing: &[CompetingTxSignal]) -> bool {
-    competing
-        .iter()
-        .any(|tx| tx.block_number >= record.target_block && tx.effective_tip_wei > record.tip_wei)
+    competing.iter().any(|tx| {
+        tx.block_number >= record.target_block
+            && tx.block_number <= record.target_block.saturating_add(1)
+            && tx.effective_tip_wei > record.tip_wei
+    })
 }
 
 pub fn stale_by_time(record: &PendingBundleRecord, max_age: Duration) -> bool {
