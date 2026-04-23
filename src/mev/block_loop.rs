@@ -3,6 +3,9 @@ use crate::dashboard::DashboardHandle;
 use crate::mev::competition::{
     extract_block_signals, CompetitionForecast, CompetitionIntelligence, PoolActivity, PressureMap,
 };
+use crate::mev::execution::finalizer::ExecutionFinalizer;
+use crate::mev::execution::nonce_manager::{NonceManager, NonceReservation};
+use crate::mev::execution::tx_lifecycle::TxLifecycleManager;
 use crate::mev::feedback::FeedbackEngine;
 use crate::mev::inclusion::{InclusionEngine, InclusionFeedback};
 use crate::mev::inclusion_truth::{
@@ -35,6 +38,8 @@ pub struct LearningRuntime {
     post_block: Arc<Mutex<PostBlockAnalyzer>>,
     feedback: Arc<Mutex<FeedbackEngine>>,
     inclusion: Arc<Mutex<InclusionEngine>>,
+    nonce: Arc<Mutex<NonceManager>>,
+    lifecycle: Arc<Mutex<TxLifecycleManager>>,
     survival: Arc<Mutex<SurvivalState>>,
 }
 
@@ -55,6 +60,8 @@ impl LearningRuntime {
             post_block: Arc::new(Mutex::new(PostBlockAnalyzer::new(512))),
             feedback: Arc::new(Mutex::new(FeedbackEngine::new(512))),
             inclusion: Arc::new(Mutex::new(InclusionEngine::from_config(config))),
+            nonce: Arc::new(Mutex::new(NonceManager::new(512))),
+            lifecycle: Arc::new(Mutex::new(TxLifecycleManager::new(512))),
             survival: Arc::new(Mutex::new(SurvivalState {
                 enabled: false,
                 degradation_ewma: 0.0,
@@ -64,6 +71,28 @@ impl LearningRuntime {
     }
 
     pub fn register_execution(&self, event: ExecutionEvent) {
+        if let Ok(mut lifecycle) = self.lifecycle.lock() {
+            lifecycle.register_signed(
+                event.opportunity_id.clone(),
+                event.tx_hash,
+                event.wallet,
+                event.nonce,
+                event.target_block,
+                event.gas_price_wei,
+                event.tip_wei,
+            );
+            lifecycle.mark_submitted(event.tx_hash);
+        }
+        if let Ok(mut nonce) = self.nonce.lock() {
+            nonce.mark_submitted(
+                NonceReservation {
+                    address: event.wallet,
+                    nonce: event.nonce,
+                    generation: event.nonce_generation,
+                },
+                event.tx_hash,
+            );
+        }
         if let Ok(mut truth) = self.truth.lock() {
             truth.register(PendingBundleRecord {
                 bundle_hash: event.bundle_hash,
@@ -95,6 +124,14 @@ impl LearningRuntime {
 
     pub fn pressure(&self) -> Arc<Mutex<PressureMap>> {
         self.pressure.clone()
+    }
+
+    pub fn nonce(&self) -> Arc<Mutex<NonceManager>> {
+        self.nonce.clone()
+    }
+
+    pub fn lifecycle(&self) -> Arc<Mutex<TxLifecycleManager>> {
+        self.lifecycle.clone()
     }
 
     pub fn observe_pending_transaction(&self, tx: &Transaction) {
@@ -140,12 +177,17 @@ impl LearningRuntime {
 
 #[derive(Debug, Clone)]
 pub struct ExecutionEvent {
+    pub opportunity_id: String,
     pub bundle_hash: Option<H256>,
     pub tx_hash: H256,
+    pub wallet: Address,
+    pub nonce: U256,
+    pub nonce_generation: u64,
     pub target_block: u64,
     pub submitted_at: std::time::Instant,
     pub relay: String,
     pub tip_wei: U256,
+    pub gas_price_wei: U256,
     pub expected_profit_usd: f64,
     pub competition_score: f64,
 }
@@ -203,7 +245,11 @@ async fn process_block(
             .as_ref()
             .and_then(|receipt| receipt.status)
             .map(|status| status.as_u64() == 1);
-        receipt_results.push((hash, included_block, success));
+        let gas_used = receipt.as_ref().and_then(|receipt| receipt.gas_used);
+        let effective_gas_price = receipt
+            .as_ref()
+            .and_then(|receipt| receipt.effective_gas_price);
+        receipt_results.push((hash, included_block, success, gas_used, effective_gas_price));
     }
     let truths = {
         let mut truth = match runtime.truth.lock() {
@@ -211,10 +257,16 @@ async fn process_block(
             Err(_) => return,
         };
         let mut truths = Vec::new();
-        for (hash, included_block, success) in receipt_results {
-            if let Some(item) =
-                truth.reconcile_receipt(hash, included_block, success, block_number, &competing)
-            {
+        for (hash, included_block, success, gas_used, effective_gas_price) in receipt_results {
+            if let Some(item) = truth.reconcile_receipt(
+                hash,
+                included_block,
+                success,
+                gas_used,
+                effective_gas_price,
+                block_number,
+                &competing,
+            ) {
                 truths.push(item);
             }
         }
@@ -229,6 +281,7 @@ async fn process_block(
         update_post_block(runtime, &truth);
         update_feedback(runtime, &truth);
         update_inclusion(runtime, &truth, finalized);
+        finalize_execution(runtime, &truth);
         update_survival(runtime, finalized, block_number);
         dashboard.event(
             "info",
@@ -248,6 +301,19 @@ async fn process_block(
             ),
         );
     }
+}
+
+fn finalize_execution(
+    runtime: &LearningRuntime,
+    truth: &crate::mev::inclusion_truth::InclusionTruth,
+) {
+    let Ok(mut lifecycle) = runtime.lifecycle.lock() else {
+        return;
+    };
+    let Ok(mut nonce) = runtime.nonce.lock() else {
+        return;
+    };
+    let _ = ExecutionFinalizer::finalize_truth(&mut lifecycle, &mut nonce, None, truth);
 }
 
 async fn collect_competing_signals(
