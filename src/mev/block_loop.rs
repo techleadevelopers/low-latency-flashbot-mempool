@@ -11,6 +11,9 @@ use crate::mev::inclusion::{InclusionEngine, InclusionFeedback};
 use crate::mev::inclusion_truth::{
     BundleOutcome, CompetingTxSignal, InclusionTruthEngine, PendingBundleRecord,
 };
+use crate::mev::market_truth::competition_reality::{CompetitionRealityInput, RouteCluster};
+use crate::mev::market_truth::edge_survival::EdgeSurvivalInput;
+use crate::mev::market_truth::truth_pipeline::{MarketTruthInput, TruthPipeline};
 use crate::mev::post_block::PostBlockAnalyzer;
 use crate::mev::tip_discovery::{OpportunityClass, TipDiscoveryEngine, TipOutcome};
 use crate::rpc::RpcFleet;
@@ -282,6 +285,7 @@ async fn process_block(
         update_feedback(runtime, &truth);
         update_inclusion(runtime, &truth, finalized);
         finalize_execution(runtime, &truth);
+        update_market_truth(runtime, &truth);
         update_survival(runtime, finalized, block_number);
         dashboard.event(
             "info",
@@ -301,6 +305,52 @@ async fn process_block(
             ),
         );
     }
+}
+
+fn update_market_truth(
+    runtime: &LearningRuntime,
+    truth: &crate::mev::inclusion_truth::InclusionTruth,
+) {
+    let event_store = runtime
+        .lifecycle
+        .lock()
+        .ok()
+        .and_then(|lifecycle| lifecycle.event_store());
+    let Some(event_store) = event_store else {
+        return;
+    };
+    let competitor_pressure = truth.competition_score.clamp(0.0, 1.0);
+    let input = MarketTruthInput {
+        truth: truth.clone(),
+        entry_timestamp_ms: unix_ms().saturating_sub(truth.latency_ms as u64),
+        entry_price: 0.0,
+        execution_price: 0.0,
+        net_execution_value: 0.0,
+        slippage_bps: 0.0,
+        fill_ratio: 0.0,
+        market_snapshots: Vec::new(),
+        competition: CompetitionRealityInput {
+            route: RouteCluster {
+                pool: Address::zero(),
+                token_in: Address::zero(),
+                token_out: Address::zero(),
+            },
+            mempool_similar_count: 0,
+            inclusion_delay_ms: truth.latency_ms,
+            competitor_pressure,
+            competing_included_count: 0,
+            observed_alpha_before: 0.0,
+            observed_alpha_after: 0.0,
+        },
+        survival: EdgeSurvivalInput {
+            competition_pressure: competitor_pressure,
+            mempool_congestion: 0.0,
+            historical_markout_degradation: 0.0,
+            latency_ms: truth.latency_ms,
+        },
+    };
+    let report = TruthPipeline::run(input);
+    TruthPipeline::append_report(&event_store, &report);
 }
 
 fn finalize_execution(
