@@ -65,6 +65,10 @@ impl TxLifecycleManager {
         self.event_store = Some(event_store);
     }
 
+    pub fn event_store(&self) -> Option<Arc<EventStore>> {
+        self.event_store.clone()
+    }
+
     pub fn register_signed(
         &mut self,
         opportunity_id: String,
