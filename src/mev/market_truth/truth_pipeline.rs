@@ -33,6 +33,10 @@ pub struct MarketTruthInput {
 pub struct MarketTruthReport {
     pub tx_hash: ethers::types::H256,
     pub outcome: ExecutionOutcomeReal,
+    pub realized_pnl: f64,
+    pub slippage_bps: f64,
+    pub fill_ratio: f64,
+    pub latency_ms: u64,
     pub markout: MarkoutMetrics,
     pub competition: CompetitionReality,
     pub survival: EdgeSurvivalMetrics,
@@ -77,6 +81,10 @@ impl TruthPipeline {
         MarketTruthReport {
             tx_hash: input.truth.tx_hash,
             outcome,
+            realized_pnl: input.net_execution_value,
+            slippage_bps: input.slippage_bps,
+            fill_ratio: input.fill_ratio,
+            latency_ms: input.truth.latency_ms.min(u128::from(u64::MAX)) as u64,
             markout,
             competition,
             survival,
