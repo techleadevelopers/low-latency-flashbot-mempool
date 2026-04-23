@@ -22,7 +22,7 @@ pub struct CompetitionRealityInput {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct CompetitionReality {
     pub opportunity_consumed_ratio: f64,
-    pub pre_execution_alpha_decay_estimate: f64,
+    pub alpha_decay_estimate: f64,
     pub late_entry_probability: f64,
     pub competitor_capture_likelihood: f64,
 }
@@ -45,7 +45,7 @@ impl CompetitionRealityEngine {
 
         CompetitionReality {
             opportunity_consumed_ratio: consumed,
-            pre_execution_alpha_decay_estimate: input
+            alpha_decay_estimate: input
                 .observed_alpha_before
                 .max(0.0)
                 .saturating_sub_f64(input.observed_alpha_after.max(0.0)),
