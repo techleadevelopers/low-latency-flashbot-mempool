@@ -29,6 +29,7 @@ pub enum StateEvent {
     RiskDecision(RiskDecision),
     InclusionTruthUpdate(InclusionTruthUpdate),
     MarketTruthUpdate(MarketTruthUpdate),
+    SurvivalFeedbackUpdate(SurvivalFeedbackUpdate),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -125,6 +126,28 @@ pub struct MarketTruthUpdate {
     pub lost_alpha: f64,
     pub inefficiency_score: f64,
     pub missed_opportunity: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SurvivalFeedbackUpdate {
+    pub tx_hash: H256,
+    pub outcome: String,
+    pub sample_class: String,
+    pub accepted_sample: bool,
+    pub false_positive_ewma: f64,
+    pub false_negative_ewma: f64,
+    pub good_execution_ewma: f64,
+    pub false_positives: u64,
+    pub false_negatives: u64,
+    pub correct_decisions: u64,
+    pub low_confidence_ignored: u64,
+    pub accepted_samples: u64,
+    pub adaptation_drift: f64,
+    pub survival_probability_threshold: f64,
+    pub max_competitor_capture: f64,
+    pub max_latency_risk: f64,
+    pub max_staleness: f64,
+    pub min_pool_freshness: f64,
 }
 
 #[derive(Debug)]
