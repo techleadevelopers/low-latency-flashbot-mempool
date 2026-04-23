@@ -6,6 +6,7 @@ use crate::mev::competition::{
 use crate::mev::execution::finalizer::ExecutionFinalizer;
 use crate::mev::execution::nonce_manager::{NonceManager, NonceReservation};
 use crate::mev::execution::tx_lifecycle::TxLifecycleManager;
+use crate::mev::feedback::survival_feedback::SurvivalFeedbackEngine;
 use crate::mev::feedback::FeedbackEngine;
 use crate::mev::inclusion::{InclusionEngine, InclusionFeedback};
 use crate::mev::inclusion_truth::{
@@ -15,6 +16,8 @@ use crate::mev::market_truth::competition_reality::{CompetitionRealityInput, Rou
 use crate::mev::market_truth::edge_survival::EdgeSurvivalInput;
 use crate::mev::market_truth::truth_pipeline::{MarketTruthInput, TruthPipeline};
 use crate::mev::post_block::PostBlockAnalyzer;
+use crate::mev::state::event_store::StateEvent;
+use crate::mev::survival::survival_gate::SurvivalGateConfig;
 use crate::mev::tip_discovery::{OpportunityClass, TipDiscoveryEngine, TipOutcome};
 use crate::rpc::RpcFleet;
 use ethers::providers::Middleware;
@@ -44,6 +47,7 @@ pub struct LearningRuntime {
     nonce: Arc<Mutex<NonceManager>>,
     lifecycle: Arc<Mutex<TxLifecycleManager>>,
     survival: Arc<Mutex<SurvivalState>>,
+    survival_feedback: Arc<Mutex<SurvivalFeedbackEngine>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -70,6 +74,9 @@ impl LearningRuntime {
                 degradation_ewma: 0.0,
                 last_block: 0,
             })),
+            survival_feedback: Arc::new(Mutex::new(SurvivalFeedbackEngine::new(
+                SurvivalGateConfig::from_env(),
+            ))),
         }
     }
 
@@ -320,14 +327,23 @@ fn update_market_truth(
         return;
     };
     let competitor_pressure = truth.competition_score.clamp(0.0, 1.0);
+    let realized_pnl = if matches!(
+        truth.outcome,
+        crate::mev::inclusion_truth::BundleOutcome::Included
+            | crate::mev::inclusion_truth::BundleOutcome::LateInclusion
+    ) {
+        truth.expected_profit_usd
+    } else {
+        0.0
+    };
     let input = MarketTruthInput {
         truth: truth.clone(),
         entry_timestamp_ms: unix_ms().saturating_sub(truth.latency_ms as u64),
         entry_price: 0.0,
         execution_price: 0.0,
-        net_execution_value: 0.0,
+        net_execution_value: realized_pnl,
         slippage_bps: 0.0,
-        fill_ratio: 0.0,
+        fill_ratio: 1.0,
         market_snapshots: Vec::new(),
         competition: CompetitionRealityInput {
             route: RouteCluster {
@@ -353,6 +369,31 @@ fn update_market_truth(
     };
     let report = TruthPipeline::run(input);
     TruthPipeline::append_report(&event_store, &report);
+    if let Ok(mut feedback) = runtime.survival_feedback.lock() {
+        let update = feedback.ingest_report(&report);
+        let _ = event_store.append(StateEvent::SurvivalFeedbackUpdate(
+            crate::mev::state::event_store::SurvivalFeedbackUpdate {
+                tx_hash: update.tx_hash,
+                outcome: update.outcome,
+                sample_class: update.sample_class,
+                accepted_sample: update.accepted_sample,
+                false_positive_ewma: update.false_positive_ewma,
+                false_negative_ewma: update.false_negative_ewma,
+                good_execution_ewma: update.good_execution_ewma,
+                false_positives: update.false_positives,
+                false_negatives: update.false_negatives,
+                correct_decisions: update.correct_decisions,
+                low_confidence_ignored: update.low_confidence_ignored,
+                accepted_samples: update.accepted_samples,
+                adaptation_drift: update.adaptation_drift,
+                survival_probability_threshold: update.survival_probability_threshold,
+                max_competitor_capture: update.max_competitor_capture,
+                max_latency_risk: update.max_latency_risk,
+                max_staleness: update.max_staleness,
+                min_pool_freshness: update.min_pool_freshness,
+            },
+        ));
+    }
 }
 
 fn finalize_execution(
