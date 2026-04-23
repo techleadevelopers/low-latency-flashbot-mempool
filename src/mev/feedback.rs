@@ -2,6 +2,9 @@ use std::collections::VecDeque;
 
 use crate::mev::inclusion_truth::{BundleOutcome, InclusionTruth};
 
+#[path = "feedback/survival_feedback.rs"]
+pub mod survival_feedback;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FailureReason {
     NotIncluded,
