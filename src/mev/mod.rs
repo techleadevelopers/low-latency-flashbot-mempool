@@ -8,6 +8,7 @@ pub mod execution;
 pub mod feedback;
 pub mod inclusion;
 pub mod inclusion_truth;
+pub mod market_truth;
 pub mod meta_decision;
 pub mod opportunity;
 pub mod pnl;
