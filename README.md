@@ -729,6 +729,35 @@ Regras:
 - flush controlado por threshold
 - replay ordenado por `(timestamp_ms, sequence)`
 
+`MarketTruthUpdate` e o evento economico pos-trade. Ele nao participa da decisao de executar; ele so registra a verdade economica observada depois do receipt. Campos atuais:
+
+- `tx_hash`
+- `outcome`
+- `edge_real_value`
+- `adverse_selection_score`
+- `fill_quality_score`
+- `execution_toxicity_index`
+- `opportunity_consumed_ratio`
+- `alpha_decay_estimate`
+- `late_entry_probability`
+- `competitor_capture_likelihood`
+- `edge_survival_probability`
+- `decay_velocity`
+- `execution_viability_window_ms`
+- `lost_alpha`
+- `inefficiency_score`
+- `missed_opportunity`
+
+Essa extensao separa tres verdades diferentes:
+
+```text
+Inclusion Truth     = a transacao/bundle entrou ou nao entrou
+Market Truth        = a execucao foi economicamente boa ou toxica
+Opportunity Reality = a oportunidade ainda existia ou ja tinha sido consumida
+```
+
+Um bundle pode ser incluido e ainda assim virar `IncludedToxicFill`. Um bundle pode falhar inclusao e ainda assim virar `MissedOpportunity` se o replay observar alpha capturavel. Essa distincao e proposital.
+
 Configuracao por env:
 
 ```env
@@ -905,6 +934,23 @@ Essa camada responde perguntas que inclusion truth nao responde:
 - competidor capturou edge antes da nossa execucao?
 - a inclusao foi economicamente irrelevante?
 
+Regra de design:
+
+```text
+Market Truth nao decide trade.
+Market Truth nao altera risk.
+Market Truth nao altera estrategia.
+Market Truth so classifica resultado economico depois do fato.
+```
+
+O objetivo e criar inteligencia adversarial pos-mortem:
+
+- quando o sistema estava certo mas perdeu dinheiro
+- quando estava errado mas ganhou por acaso
+- quando o alpha ja estava consumido antes da execucao
+- quando inclusao foi inutil economicamente
+- quando o fill foi toxico apesar de lucro bruto
+
 ### ExecutionOutcomeReal
 
 Enum:
@@ -935,6 +981,25 @@ Derivado apenas de:
 
 Nao usa estrategia nem score original.
 
+Classificacao atual:
+
+- `IncludedProfit`: incluido e economicamente favoravel.
+- `IncludedLoss`: incluido com valor liquido/markout negativo.
+- `IncludedAdverseSelection`: incluido, mas markout indica selecao adversa.
+- `IncludedToxicFill`: fill ruim/toxico pelo indice de toxicidade.
+- `IncludedLateFill`: entrou tarde em relacao ao target.
+- `IncludedPartialCapture`: captura parcial ou dados economicos insuficientes para chamar de profit real.
+- `MissedOpportunity`: nao entrou, mas sinais pos-trade indicam oportunidade consumida por competidor.
+- `NotIncluded`: nao entrou e nao ha evidencia economica suficiente de alpha perdido.
+- `Reverted`: receipt indica revert.
+
+Ponto importante:
+
+```text
+IncludedProfit exige evidencia economica.
+Sem price series/markout, o sistema nao inventa profit.
+```
+
 ### Markout Engine
 
 Modulo:
@@ -961,11 +1026,35 @@ Metricas:
 - `fill_quality_score`
 - `execution_toxicity_index`
 
+Contrato publico:
+
+```rust
+pub struct MarkoutResult {
+    pub markout_100ms: f64,
+    pub markout_500ms: f64,
+    pub markout_1s: f64,
+    pub markout_5s: f64,
+    pub edge_real_value: f64,
+    pub adverse_selection_score: f64,
+    pub fill_quality_score: f64,
+    pub execution_toxicity_index: f64,
+}
+```
+
 Regra:
 
 - usa somente dados de mercado apos execucao
 - deterministico
 - replayable
+
+Interpretacao:
+
+- markout positivo apos execucao sugere edge preservada
+- markout negativo rapido sugere toxic fill ou adverse selection
+- fill quality mede distancia entre preco esperado/entry e preco efetivo
+- toxicity combina selecao adversa e qualidade de fill
+
+Sem snapshots pos-execucao suficientes, o resultado padrao e neutro/conservador. Isso evita contaminar aprendizado com lucro ficticio.
 
 ### Competition Reality
 
@@ -976,7 +1065,7 @@ Modulo:
 Modelo de consumo da oportunidade:
 
 - `opportunity_consumed_ratio`
-- `pre_execution_alpha_decay_estimate`
+- `alpha_decay_estimate`
 - `late_entry_probability`
 - `competitor_capture_likelihood`
 
@@ -988,6 +1077,26 @@ pool + token_in + token_out
 
 Nao assume intencao. Infere apenas de dados observaveis.
 
+Contrato publico:
+
+```rust
+pub struct CompetitionReality {
+    pub opportunity_consumed_ratio: f64,
+    pub alpha_decay_estimate: f64,
+    pub late_entry_probability: f64,
+    pub competitor_capture_likelihood: f64,
+}
+```
+
+Leitura operacional:
+
+- `opportunity_consumed_ratio`: quanto da oportunidade parece ter sido consumida.
+- `alpha_decay_estimate`: diferenca observavel entre alpha antes/depois.
+- `late_entry_probability`: chance de termos entrado tarde.
+- `competitor_capture_likelihood`: probabilidade de competidor ter capturado a edge.
+
+Isso e pos-trade intelligence. Nao bloqueia trade no fluxo atual.
+
 ### Edge Survival
 
 Modulo:
@@ -996,7 +1105,7 @@ Modulo:
 
 Metricas:
 
-- `edge_survival_probability`
+- `survival_probability`
 - `decay_velocity`
 - `execution_viability_window_ms`
 
@@ -1006,6 +1115,24 @@ Incorpora:
 - mempool congestion
 - historical markout degradation
 - latency risk
+
+Contrato publico:
+
+```rust
+pub struct EdgeSurvival {
+    pub survival_probability: f64,
+    pub decay_velocity: f64,
+    pub execution_viability_window_ms: u64,
+}
+```
+
+Leitura:
+
+- `survival_probability` baixo indica que oportunidades similares decaem rapido.
+- `decay_velocity` alto indica que latencia/competicao/mempool estao consumindo alpha.
+- `execution_viability_window_ms` estima a janela economica para trades similares.
+
+Esse dado deve alimentar analise e calibracao futura off-path, nao o decision flow atual.
 
 ### Truth Pipeline
 
@@ -1020,6 +1147,7 @@ InclusionTruth
   -> MarkoutEngine
   -> CompetitionRealityEngine
   -> EdgeSurvivalEngine
+  -> ExecutionReplayEngine
   -> ExecutionOutcomeReal
   -> EventStore::MarketTruthUpdate
 ```
@@ -1031,6 +1159,40 @@ Integracao atual:
 - nao altera decision flow
 - nao altera risk
 - nao altera strategy scoring
+
+Contrato de entrada:
+
+```rust
+pub struct MarketTruthInput {
+    pub truth: InclusionTruth,
+    pub entry_timestamp_ms: u64,
+    pub entry_price: f64,
+    pub execution_price: f64,
+    pub net_execution_value: f64,
+    pub slippage_bps: f64,
+    pub fill_ratio: f64,
+    pub market_snapshots: Vec<MarketSnapshot>,
+    pub competition: CompetitionRealityInput,
+    pub survival: EdgeSurvivalInput,
+    pub expected_execution_value: f64,
+    pub observed_best_execution_value: f64,
+}
+```
+
+Contrato de saida:
+
+```rust
+pub struct MarketTruthReport {
+    pub tx_hash: H256,
+    pub outcome: ExecutionOutcomeReal,
+    pub markout: MarkoutResult,
+    pub competition: CompetitionReality,
+    pub survival: EdgeSurvival,
+    pub replay: ReplayResult,
+}
+```
+
+O pipeline e deterministico para o mesmo conjunto de inputs. Ele nao acessa RPC live e nao usa estrategia como sinal.
 
 Limitacao honesta:
 
@@ -1065,6 +1227,30 @@ Outputs:
 - `lost_alpha_per_trade`
 - `execution_inefficiency_map`
 - `missed_opportunity_heatmap`
+
+Contrato resumido usado no pipeline online:
+
+```rust
+pub struct ReplayResult {
+    pub lost_alpha: f64,
+    pub inefficiency_score: f64,
+    pub missed_opportunity: f64,
+}
+```
+
+O replay compara:
+
+```text
+actual_execution
+vs
+best_possible_execution observado na serie de mercado
+```
+
+Metricas:
+
+- `lost_alpha`: diferenca positiva entre melhor execucao observada e execucao real.
+- `inefficiency_score`: alpha perdido normalizado.
+- `missed_opportunity`: intensidade da oportunidade perdida quando nao houve inclusao.
 
 Isso e essencial para calibrar o sistema sem autoengano. O replay deve responder:
 
@@ -1149,6 +1335,43 @@ uma execucao incluida e operacionalmente correta, mas pode ser economicamente ru
 ```
 
 Por isso a Market Truth Layer existe.
+
+### Logica atual da Market Truth no runtime
+
+No runtime atual, o hook de `block_loop.rs` roda depois de `InclusionTruthEngine` e depois da finalizacao de lifecycle/nonce. Ele monta um `MarketTruthInput` com os dados observaveis disponiveis naquele momento.
+
+Estado atual dos dados:
+
+- `InclusionTruth`: real, vindo de receipt/reconcile.
+- `latency_ms`: real, derivado do tempo entre submit e reconcile.
+- `gas_used` e `effective_gas_price`: reais quando receipt existe.
+- `competition_score`: observavel do fluxo de inclusion/competition.
+- `market_snapshots`: ainda vazio no hook online.
+- `entry_price`/`execution_price`: ainda nao conectados a feed real de mercado.
+- `observed_best_execution_value`: placeholder conservador baseado no esperado, ate haver replay com serie real.
+
+Consequencia:
+
+```text
+o sistema ja grava MarketTruthUpdate,
+mas ainda nao deve tratar IncludedProfit como prova economica forte
+sem price snapshots e balance deltas reais.
+```
+
+Essa escolha e intencional. E melhor classificar como parcial/insuficiente do que ensinar o sistema com lucro ficticio.
+
+Para ativar verdade economica forte, faltam dois feeds:
+
+1. price snapshots pos-execucao por pool/rota
+2. balance delta real por token depois da execucao
+
+Quando esses feeds forem conectados, a mesma camada passa a produzir:
+
+- profit/loss economico real
+- toxic fill real
+- markout real
+- lost alpha real
+- opportunity decay real
 
 ## Roadmap senior recomendado
 
