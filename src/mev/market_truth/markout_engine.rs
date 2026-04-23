@@ -50,7 +50,8 @@ impl MarkoutEngine {
         let markout_1s = markout(entry_timestamp_ms, entry_price, snapshots, 1_000);
         let markout_5s = markout(entry_timestamp_ms, entry_price, snapshots, 5_000);
         let fill_quality_score = fill_quality(entry_price, execution_price);
-        let adverse_selection_score = adverse_selection([markout_100ms, markout_500ms, markout_1s, markout_5s]);
+        let adverse_selection_score =
+            adverse_selection([markout_100ms, markout_500ms, markout_1s, markout_5s]);
         let execution_toxicity_index =
             (adverse_selection_score * 0.65 + (1.0 - fill_quality_score) * 0.35).clamp(0.0, 1.0);
 
