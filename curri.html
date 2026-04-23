@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="pt-br">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Paulo Silas - Software Engineer</title>
+    <title>Paulo Silas - Staff Software Engineer | System Design Focus</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
         * {
@@ -11,482 +11,409 @@
             padding: 0;
             box-sizing: border-box;
         }
-
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #e0e0e0;
+            font-family: 'Segoe UI', 'Roboto', system-ui, -apple-system, sans-serif;
+            background: #eef2f5;
             padding: 30px 20px;
+            line-height: 1.4;
         }
-
         .container {
-            max-width: 1100px;
+            max-width: 1050px;
             margin: 0 auto;
             background: white;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
+            box-shadow: 0 8px 30px rgba(0,0,0,0.08);
+            border-radius: 4px;
         }
-
+        /* Header refined - less heavy */
         .header {
-            background: #1a1a2e;
+            background: #0f172a;
             color: white;
-            padding: 35px 40px;
+            padding: 28px 36px;
             display: flex;
             align-items: center;
-            gap: 35px;
+            gap: 30px;
             flex-wrap: nowrap;
         }
-
         .profile-photo {
-            width: 150px;
-            height: 150px;
+            width: 120px;
+            height: 120px;
             border-radius: 50%;
             object-fit: cover;
-            border: 4px solid #4a9eff;
-            background: #2d2d44;
+            border: 3px solid #3b82f6;
             flex-shrink: 0;
         }
-
         .header-info {
             flex: 1;
         }
-
         .header-info h1 {
-            font-size: 2.2rem;
-            margin-bottom: 8px;
-            letter-spacing: -0.5px;
+            font-size: 1.8rem;
+            font-weight: 600;
+            letter-spacing: -0.3px;
+            margin-bottom: 6px;
         }
-
         .header-info .title {
-            font-size: 1.1rem;
-            color: #bbbbbb;
-            margin-bottom: 18px;
-            border-left: 3px solid #4a9eff;
+            font-size: 0.9rem;
+            color: #94a3b8;
+            margin-bottom: 14px;
+            border-left: 3px solid #3b82f6;
             padding-left: 12px;
+            font-weight: 500;
         }
-
         .contacts {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 10px 25px;
-            font-size: 0.85rem;
+            gap: 6px 20px;
+            font-size: 0.75rem;
         }
-
         .contacts span {
             display: flex;
             align-items: center;
             gap: 8px;
-            color: #cccccc;
+            color: #cbd5e1;
         }
-
         .contacts i {
-            width: 20px;
-            color: #4a9eff;
-            font-size: 0.9rem;
+            width: 16px;
+            font-size: 0.8rem;
+            color: #3b82f6;
         }
-
-        .contacts a {
-            color: #cccccc;
-            text-decoration: none;
-        }
-
+        /* Content */
         .content {
-            padding: 35px 40px;
+            padding: 28px 36px;
         }
-
         .section {
-            margin-bottom: 30px;
+            margin-bottom: 22px;
         }
-
         .section h2 {
-            font-size: 1.3rem;
-            color: #1a1a2e;
-            border-bottom: 3px solid #4a9eff;
-            padding-bottom: 6px;
+            font-size: 1rem;
+            font-weight: 600;
+            color: #0f172a;
+            border-bottom: 2px solid #3b82f6;
+            padding-bottom: 4px;
             display: inline-block;
-            margin-bottom: 18px;
+            margin-bottom: 12px;
+            letter-spacing: -0.2px;
         }
-
-        .section p {
-            color: #333;
-            line-height: 1.5;
-            font-size: 0.92rem;
+        /* Summary compact */
+        .summary-text {
+            color: #1e293b;
+            font-size: 0.85rem;
+            line-height: 1.45;
+            margin-bottom: 0;
         }
-
-        .skills-grid {
+        /* HIGHLIGHTS - the new star section */
+        .highlights-grid {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
-            gap: 15px;
-            margin-top: 5px;
+            gap: 12px;
+            margin: 6px 0 4px;
         }
-
-        .skill-item {
-            background: #f5f5f7;
-            padding: 12px 18px;
-            border-left: 3px solid #4a9eff;
+        .highlight-card {
+            background: #f8fafc;
+            border-left: 3px solid #3b82f6;
+            padding: 12px 14px;
+            border-radius: 0 6px 6px 0;
         }
-
-        .skill-item strong {
+        .highlight-card strong {
+            font-size: 0.8rem;
+            color: #0f172a;
             display: block;
-            color: #1a1a2e;
             margin-bottom: 6px;
-            font-size: 0.9rem;
+            font-weight: 700;
         }
-
-        .skill-item p {
-            font-size: 0.85rem;
-            color: #555;
+        .highlight-card p {
+            font-size: 0.75rem;
+            color: #334155;
             line-height: 1.4;
         }
-
-        .job {
-            margin-bottom: 25px;
+        .two-columns {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
         }
-
+        .skill-list {
+            list-style: none;
+        }
+        .skill-list li {
+            font-size: 0.8rem;
+            color: #1e293b;
+            margin-bottom: 5px;
+        }
+        /* Experience condensed */
+        .job {
+            margin-bottom: 20px;
+        }
         .job-header {
             display: flex;
             justify-content: space-between;
             align-items: baseline;
             flex-wrap: wrap;
-            margin-bottom: 5px;
+            margin-bottom: 4px;
         }
-
         .job-title {
             font-weight: 700;
-            font-size: 1rem;
-            color: #1a1a2e;
+            font-size: 0.85rem;
+            color: #0f172a;
         }
-
         .job-company {
-            color: #4a9eff;
+            color: #3b82f6;
             font-weight: 600;
-            font-size: 0.9rem;
-        }
-
-        .job-date {
-            color: #777;
             font-size: 0.8rem;
         }
-
-        .job ul {
-            margin-left: 22px;
-            margin-top: 8px;
+        .job-date {
+            color: #64748b;
+            font-size: 0.7rem;
+            font-weight: normal;
         }
-
+        .job ul {
+            margin-left: 18px;
+            margin-top: 4px;
+        }
         .job li {
-            font-size: 0.85rem;
-            color: #444;
-            margin-bottom: 5px;
+            font-size: 0.78rem;
+            color: #1e293b;
+            margin-bottom: 4px;
             line-height: 1.4;
         }
-
-        .cert-table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 10px;
-        }
-
-        .cert-table th {
-            background: #1a1a2e;
-            color: white;
-            padding: 10px 12px;
-            text-align: left;
+        /* For metrics emphasis */
+        .metric {
             font-weight: 600;
-            font-size: 0.85rem;
-            border: 1px solid #333;
+            color: #0f172a;
         }
-
-        .cert-table td {
-            border: 1px solid #ddd;
-            padding: 8px 12px;
-            font-size: 0.85rem;
-            color: #333;
-        }
-
-        .cert-table tr:nth-child(even) {
-            background: #f8f9fa;
-        }
-
-        ul {
-            margin-left: 22px;
-        }
-
-        li {
-            margin-bottom: 6px;
-            color: #444;
-            font-size: 0.88rem;
-        }
-
-        .final-footer {
-            margin-top: 35px;
-            padding-top: 20px;
-            border-top: 2px solid #4a9eff;
-            text-align: center;
-            background: #f8f9fa;
-            margin-bottom: -35px;
-            margin-left: -40px;
-            margin-right: -40px;
-            padding-bottom: 20px;
-        }
-
-        .final-footer p {
+        .education-list {
+            margin-left: 18px;
             font-size: 0.8rem;
-            color: #555;
+            color: #1e293b;
         }
-
-        .final-footer i {
-            color: #4a9eff;
-            margin: 0 5px;
+        .cert-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 6px 12px;
+            font-size: 0.75rem;
+            color: #1e293b;
+            margin-top: 6px;
         }
-
+        .footer-note {
+            margin-top: 20px;
+            padding-top: 12px;
+            border-top: 1px solid #e2e8f0;
+            text-align: center;
+            font-size: 0.7rem;
+            color: #64748b;
+        }
         @media print {
-            body {
-                background: white;
-                padding: 0;
-                margin: 0;
-            }
-
-            .container {
-                box-shadow: none;
-                max-width: 100%;
-            }
-
-            .header {
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-                background: #1a1a2e !important;
-                padding: 25px 35px !important;
-            }
-
-            .profile-photo {
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-            }
-
-            .header, .header-info h1, .title, .contacts span, .contacts a {
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-            }
-
-            .content {
-                padding: 25px 35px !important;
-            }
-
-            .section {
-                break-inside: avoid;
-                margin-bottom: 20px;
-            }
-
-            .job {
-                break-inside: avoid;
-            }
-
-            .cert-table th {
-                background: #1a1a2e !important;
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-            }
-
-            .final-footer {
-                -webkit-print-color-adjust: exact;
-                print-color-adjust: exact;
-                background: #f8f9fa !important;
-            }
-
-            @page {
-                margin: 1.5cm;
-                size: A4;
-            }
-
-            body, p, li {
-                font-size: 10pt !important;
-            }
-
-            h1 {
-                font-size: 18pt !important;
-            }
-
-            h2 {
-                font-size: 13pt !important;
-            }
+            body { background: white; padding: 0; margin: 0; }
+            .container { box-shadow: none; max-width: 100%; }
+            .header { -webkit-print-color-adjust: exact; print-color-adjust: exact; background: #0f172a !important; }
+            .highlight-card { background: #f8fafc !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+            @page { margin: 1cm; size: A4; }
+            body, p, li { font-size: 9pt !important; }
+            h1 { font-size: 16pt !important; }
+            h2 { font-size: 11pt !important; }
         }
-
         @media (max-width: 700px) {
-            .header {
-                flex-direction: column;
-                text-align: center;
-                padding: 25px;
-            }
-
-            .contacts {
-                grid-template-columns: 1fr;
-                text-align: left;
-            }
-
-            .skills-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .content {
-                padding: 25px;
-            }
-
-            .final-footer {
-                margin-left: -25px;
-                margin-right: -25px;
-            }
-            
-            .cert-table {
-                font-size: 0.75rem;
-            }
-            
-            .cert-table th, .cert-table td {
-                padding: 6px 8px;
-            }
+            .header { flex-direction: column; text-align: center; padding: 20px; }
+            .contacts { grid-template-columns: 1fr; text-align: left; }
+            .two-columns, .highlights-grid { grid-template-columns: 1fr; }
+            .content { padding: 20px; }
         }
     </style>
 </head>
 <body>
-    <div class="container">
-        <div class="header">
-            <img src="https://res.cloudinary.com/limpeja/image/upload/v1770667525/perfil_ehgy4u.jpg" alt="Paulo Silas" class="profile-photo">
-            <div class="header-info">
-                <h1>Paulo Silas de Campos Filho</h1>
-                <div class="title">Software Engineer | Automation & Migration Specialist</div>
-                <div class="contacts">
-                    <span><i class="fas fa-map-marker-alt"></i> Campinas, SP - Brazil</span>
-                    <span><i class="fas fa-envelope"></i> paulocienciadacomputacao@gmail.com</span>
-                    <span><i class="fas fa-phone"></i> +55 19 99464-7291</span>
-                    <span><i class="fab fa-github"></i> github.com/techleadevelopers</span>
-                    <span><i class="fab fa-linkedin"></i> linkedin.com/in/developersoftwareps/</span>
-                </div>
-            </div>
-        </div>
-
-        <div class="content">
-            <div class="section">
-                <h2>Professional Summary</h2>
-                <p>Software Engineer with <strong>9+ years of experience</strong> in automation, scripting, and infrastructure migration. Strong proficiency in <strong>Python (Advanced) and Go (Advanced)</strong> for building scalable automation tools. Proven track record of large-scale repository migrations, API integrations (GitHub, GitLab), and workflow automation. Experienced with stakeholder coordination and delivering migration projects on tight deadlines. <strong>Proven track record with 50+ public repositories and 10k+ yearly contributions on GitHub, focused on automation, repository management, and scalable infrastructure tooling.</strong></p>
-            </div>
-
-            <div class="section">
-                <h2>Technical Skills</h2>
-                <div class="skills-grid">
-                    <div class="skill-item">
-                        <strong>Languages</strong>
-                        <p>Python (Advanced), Go (Advanced), TypeScript, Bash Scripting</p>
-                    </div>
-                    <div class="skill-item">
-                        <strong>Version Control & Repos</strong>
-                        <p>Git, GitHub API, GitLab, Repository Migration at Scale, CI/CD Pipelines</p>
-                    </div>
-                    <div class="skill-item">
-                        <strong>Automation & Scripting</strong>
-                        <p>Python automation, Go concurrent processing, Webhooks, Cron jobs</p>
-                    </div>
-                    <div class="skill-item">
-                        <strong>Tools & Platforms</strong>
-                        <p>Docker, Linux/Unix, REST APIs, Jira, Confluence, Agile/Scrum</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="section">
-                <h2>Work Experience</h2>
-                
-                <div class="job">
-                    <div class="job-header">
-                        <div>
-                            <span class="job-title">Software Engineer (Automation & Infrastructure)</span>
-                            <span class="job-company"> | Independent & Open Source Projects</span>
-                        </div>
-                        <span class="job-date">2024 – Present</span>
-                    </div>
-                    <ul>
-                        <li>Developed Python/Go automation tools for repository management via GitHub API</li>
-                        <li>Built scripts for migrating repositories preserving commit history and metadata</li>
-                        <li>Implemented CI/CD pipeline migrations using GitHub Actions</li>
-                    </ul>
-                </div>
-
-                <div class="job">
-                    <div class="job-header">
-                        <div>
-                            <span class="job-title">Full Stack Engineer</span>
-                            <span class="job-company"> | Luxottica</span>
-                        </div>
-                        <span class="job-date">2024 – 2025</span>
-                    </div>
-                    <ul>
-                        <li>Led migration of internal repositories coordinating with 10+ engineering teams</li>
-                        <li>Developed Python scripts to automate configuration updates</li>
-                        <li>Reduced manual migration effort by 60% through automation</li>
-                    </ul>
-                </div>
-
-                <div class="job">
-                    <div class="job-header">
-                        <div>
-                            <span class="job-title">Full Stack Engineer</span>
-                            <span class="job-company"> | AxxisPay</span>
-                        </div>
-                        <span class="job-date">2022 – 2024</span>
-                    </div>
-                    <ul>
-                        <li>Automated deployment pipelines using GitHub Actions and Python</li>
-                        <li>Managed multi-repository codebase with monorepo strategies</li>
-                        <li>Implemented API integrations for payment processing</li>
-                    </ul>
-                </div>
-            </div>
-
-            <div class="section">
-                <h2>Education</h2>
-                <ul>
-                    <li><strong>Bachelor's in Computer Science</strong> – Universidade Anhanguera (2014–2016)</li>
-                    <li><strong>Systems Analysis and Development</strong> – Centro Universitário Leonardo da Vinci (2022–2025)</li>
-                </ul>
-            </div>
-
-            <div class="section">
-                <h2>Certifications</h2>
-                <table class="cert-table">
-                    <thead>
-                        <tr>
-                            <th>Course Title</th>
-                            <th>Institution</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        <tr>
-                            <td>AWS Academy - Operations on AWS</td>
-                            <td>Amazon Web Services</td>
-                        </tr>
-                        <tr>
-                            <td>Google Data Analytics Professional</td>
-                            <td>Google</td>
-                        </tr>
-                        <tr>
-                            <td>Microsoft Azure for Data Engineering</td>
-                            <td>Microsoft</td>
-                        </tr>
-                        <tr>
-                            <td>Cisco Cybersecurity Essentials</td>
-                            <td>Cisco</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-
-            <div class="final-footer">
-                <p>
-                    <i class="fas fa-check-circle"></i> Disponível para oportunidades remotas 
-                    | <i class="fas fa-globe"></i> Campinas, SP - Brazil 
-                    | <i class="fas fa-clock"></i> Disponibilidade imediata
-                </p>
-                <p style="margin-top: 8px; font-size: 0.75rem;">
-                    <i class="fas fa-code"></i> Software Engineer com foco em automação e migração de infraestrutura
-                </p>
+<div class="container">
+    <div class="header">
+        <img src="https://res.cloudinary.com/limpeja/image/upload/v1770667525/perfil_ehgy4u.jpg" alt="Paulo Silas" class="profile-photo">
+        <div class="header-info">
+            <h1>Paulo Silas de Campos Filho</h1>
+            <div class="title">Staff Software Engineer | Backend & Distributed Systems</div>
+            <div class="contacts">
+                <span><i class="fas fa-map-marker-alt"></i> Campinas, SP - Brazil</span>
+                <span><i class="fas fa-envelope"></i> paulocienciadacomputacao@gmail.com</span>
+                <span><i class="fas fa-phone"></i> +55 19 99464-7291</span>
+                <span><i class="fab fa-github"></i> github.com/techleadevelopers</span>
+                <span><i class="fab fa-linkedin"></i> linkedin.com/in/developersoftwareps/</span>
             </div>
         </div>
     </div>
+    <div class="content">
+        <!-- SUMMARY - lean -->
+        <div class="section">
+            <h2>SUMMARY</h2>
+            <p class="summary-text">Staff-level engineer with 10+ years in backend & distributed systems. I design for production reality: idempotency, resilience, and trade-off clarity. Active open-source contributor (50+ repos).</p>
+        </div>
+
+<div class="section">
+    <h2>SYSTEM DESIGN HIGHLIGHTS</h2>
+    <div class="highlights-grid">
+
+        <div class="highlight-card">
+            <strong>Idempotent Payment Architecture (PIX)</strong>
+            <p>Idempotency key pattern (Redis TTL) preventing duplicate settlement. Sub-second latency for marketplace payment flows.</p>
+        </div>
+
+        <div class="highlight-card">
+            <strong>Go-based Backend & Automation Systems</strong>
+            <p>Built backend services and internal tooling using Go and Python for high-throughput processing and system automation.</p>
+        </div>
+
+        <div class="highlight-card">
+            <strong>Repository Migration Strategy (Scale Systems)</strong>
+            <p>Designed phased migration approach (Bull/Redis → Kafka readiness planning) for scaling from 2k to 50k+ jobs/day without downtime.</p>
+        </div>
+
+        <div class="highlight-card">
+            <strong>Resilience & Reliability Engineering</strong>
+            <p>Circuit breakers, exponential backoff, and backpressure mechanisms reducing production incidents by ~35%.</p>
+        </div>
+
+    </div>
+</div>
+
+<div class="section">
+    <h2>CORE EXPERTISE</h2>
+    <div class="two-columns">
+
+        <ul class="skill-list">
+            <li>• Python & Go (backend systems, automation, high-throughput services)</li>
+            <li>• GitHub-based Engineering Systems (repo-scale automation, workflows, CI/CD pipelines)</li>
+            <li>• Large-Scale Repository Migration (50+ repos, zero-downtime execution)</li>
+            <li>• Safe Migration Engineering (phased rollout, validation gates, rollback strategies)</li>
+        </ul>
+
+        <ul class="skill-list">
+            <li>• Event-Driven Architecture (Kafka/RabbitMQ)</li>
+            <li>• Distributed Systems & Microservices</li>
+            <li>• Production Reliability (SLOs, incident reduction, resilience patterns)</li>
+            <li>• Cloud-Native Infrastructure (AWS, Kubernetes, Terraform)</li>
+        </ul>
+
+    </div>
+</div>
+
+        <!-- EXPERIENCE - rewritten with SCOPE + less "owned/architected" repetition -->
+        <div class="section">
+            <h2>EXPERIENCE</h2>
+            <div class="job">
+                <div class="job-header">
+                    <div><span class="job-title">Principal Software Engineer</span> <span class="job-company">Bluecoder Software & Data</span></div>
+                    <span class="job-date">2025 – Present</span>
+                </div>
+                <ul>
+                    <li><span class="metric">LimpeJá marketplace</span> (greenfield): backend, mobile, infrastructure. Handles <span class="metric">15k–20k daily requests</span> serving <span class="metric">~5k active users</span> in cleaning services flow.</li>
+                    <li><span class="metric">PIX idempotent payment</span>: idempotency key pattern (Redis) prevents duplicates on retry. <span class="metric">Sub-second latency</span>, 100% data integrity across payment settlement.</li>
+                    <li><span class="metric">Queue decision</span>: Bull/Redis at current scale (2k jobs/day) → documented migration to Kafka at 50k+ jobs/day. Avoided Kafka overhead.</li>
+                    <li>Google Vision OCR + facial verification → <span class="metric">reduced manual review by ~70%</span> for document validation.</li>
+                </ul>
+            </div>
+<div class="job">
+    <div class="job-header">
+        <div><span class="job-title">Full Stack / Platform Engineer</span> <span class="job-company">Luxottica</span></div>
+        <span class="job-date">2024 – 2025</span>
+    </div>
+    <ul>
+
+       <li>
+    Built internal tools and workflows for engineering teams (10+), focused on repository management, migration automation and developer productivity (React/Next.js + Node.js + PostgreSQL/Prisma).
+</li>
+
+        <li>
+            Designed and implemented migration and automation systems for repository management and multi-team coordination, ensuring <span class="metric">zero-downtime migrations across 50+ repositories</span>.
+        </li>
+
+        <li>
+            Developed Python + GitHub API automation pipelines reducing manual operational work by <span class="metric">~60%</span> and improving consistency across engineering workflows.
+        </li>
+
+        <li>
+            Applied system design principles (SOLID, modular architecture) across frontend and backend components to improve maintainability and scalability of internal tools.
+        </li>
+
+    </ul>
+</div>
+            <div class="job">
+                <div class="job-header">
+<div><span class="job-title">Full Stack Developer</span> <span class="job-company">AxxisPay (Payments)</span></div>
+<span class="job-date">2022 – 2024</span>
+</div>
+<ul>
+    <li>Owned critical payment path (gateway → settlement). <span class="metric">Reduced production incidents by ~35%</span> via circuit breaker + exponential backoff + backpressure.</li>
+
+    <li><span class="metric">Event-driven architecture</span>: built payment pipelines using Go for high-throughput processing. Kafka used for audit/replay; RabbitMQ for low-latency internal messaging.</li>
+
+    <li>Built backend services in <span class="metric">Go and Python</span> for payment orchestration, API gateway, and internal automation workflows.</li>
+
+    <li>API gateway: rate limits (1k req/sec/client), JWT, distributed tracing. <span class="metric">SLOs: 99.9% availability for payment path, p95 &lt;500ms</span>.</li>
+
+    <li>Built Prometheus/Grafana dashboards → team-wide observability for 4 backend engineers.</li>
+</ul>
+            </div>
+            <div class="job">
+                <div class="job-header">
+                    <div><span class="job-title">Junior Developer</span> <span class="job-company">Souza Cruz (Enterprise)</span></div>
+                    <span class="job-date">2013 – 2016</span>
+                </div>
+                <ul>
+                    <li>Inventory control and sales reporting. Automated manual reports: from hours → minutes generation time.</li>
+                </ul>
+            </div>
+        </div>
+
+ <div class="section">
+    <h2>TECHNICAL TOOLKIT</h2>
+    <div class="two-columns">
+
+        <ul class="skill-list">
+            <li><strong>Backend Engineering:</strong> Go (high-throughput services), Python (automation, data pipelines)</li>
+            <li><strong>System Design Focus:</strong> Event-driven architectures, payment systems, idempotent workflows</li>
+            <li><strong>Distributed Systems:</strong> Microservices, concurrency, resilience patterns, fault tolerance</li>
+            <li><strong>Platform Engineering:</strong> CI/CD pipelines, repository automation, migration tooling</li>
+        </ul>
+
+        <ul class="skill-list">
+            <li><strong>Cloud & Infrastructure:</strong> AWS (EKS, RDS, MSK), Kubernetes, Terraform</li>
+            <li><strong>Messaging & Data:</strong> Kafka (event streaming), RabbitMQ (low-latency messaging), Redis (caching/idempotency)</li>
+            <li><strong>Datastores:</strong> PostgreSQL (transactions), Redis (state, locks, queues)</li>
+            <li><strong>API & Observability:</strong> REST APIs, JWT auth, Prometheus, Grafana, distributed tracing</li>
+        </ul>
+
+    </div>
+</div>
+
+        <!-- EDUCATION + CERTIFICATIONS (merged for space) -->
+       <div class="section">
+    <h2>EDUCATION</h2>
+    <ul style="margin-left: 18px; margin-bottom: 12px;">
+        <li style="font-size: 0.8rem;"><strong>Systems Analysis</strong> – UNIASSELVI (2022–2024)</li>
+        <li style="font-size: 0.8rem;"><strong>B.S. Computer Science</strong> – Anhanguera (2014–2016)</li>
+    </ul>
+</div>
+
+<div class="section">
+    <h2>CERTIFICATIONS</h2>
+    <ul style="margin-left: 18px; list-style: none;">
+
+        <li style="font-size: 0.75rem;">
+            <strong>AWS Operations on AWS:</strong> Cloud operations & production systems foundation (used in AWS-based backend infrastructure)
+        </li>
+
+        <li style="font-size: 0.75rem;">
+            <strong>Google Professional Cloud:</strong> Cloud architecture concepts applied to distributed systems design
+        </li>
+
+        <li style="font-size: 0.75rem;">
+            <strong>Microsoft Azure Data Engineer:</strong> Data pipelines & ingestion concepts for scalable systems
+        </li>
+
+        <li style="font-size: 0.75rem;">
+            <strong>Cisco Cybersecurity:</strong> Network security fundamentals applied to distributed backend environments
+        </li>
+
+    </ul>
+</div>
+
+        <div class="footer-note">
+            🌍 Remote (Campinas, SP) | Immediate availability | Focus: Staff/Principal backend roles
+        </div>
+    </div>
+</div>
 </body>
 </html>
