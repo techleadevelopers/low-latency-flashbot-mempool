@@ -188,7 +188,9 @@ pub fn replay_events(
                     event.new_gas_price_wei,
                 );
             }
-            StateEvent::RiskDecision(_) | StateEvent::InclusionTruthUpdate(_) => {}
+            StateEvent::RiskDecision(_)
+            | StateEvent::InclusionTruthUpdate(_)
+            | StateEvent::MarketTruthUpdate(_) => {}
         }
     }
 }
