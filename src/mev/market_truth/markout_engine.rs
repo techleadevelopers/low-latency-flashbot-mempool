@@ -7,7 +7,7 @@ pub struct MarketSnapshot {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct MarkoutMetrics {
+pub struct MarkoutResult {
     pub markout_100ms: f64,
     pub markout_500ms: f64,
     pub markout_1s: f64,
@@ -18,7 +18,9 @@ pub struct MarkoutMetrics {
     pub execution_toxicity_index: f64,
 }
 
-impl Default for MarkoutMetrics {
+pub type MarkoutMetrics = MarkoutResult;
+
+impl Default for MarkoutResult {
     fn default() -> Self {
         Self {
             markout_100ms: 0.0,
@@ -41,7 +43,7 @@ impl MarkoutEngine {
         entry_price: f64,
         execution_price: f64,
         snapshots: &[MarketSnapshot],
-    ) -> MarkoutMetrics {
+    ) -> MarkoutResult {
         if !entry_price.is_finite() || entry_price <= 0.0 || snapshots.is_empty() {
             return MarkoutMetrics::default();
         }
@@ -55,7 +57,7 @@ impl MarkoutEngine {
         let execution_toxicity_index =
             (adverse_selection_score * 0.65 + (1.0 - fill_quality_score) * 0.35).clamp(0.0, 1.0);
 
-        MarkoutMetrics {
+        MarkoutResult {
             markout_100ms,
             markout_500ms,
             markout_1s,
