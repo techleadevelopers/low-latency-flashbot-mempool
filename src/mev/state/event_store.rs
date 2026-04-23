@@ -28,6 +28,7 @@ pub enum StateEvent {
     TxCancelled(TxFinalized),
     RiskDecision(RiskDecision),
     InclusionTruthUpdate(InclusionTruthUpdate),
+    MarketTruthUpdate(MarketTruthUpdate),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -104,6 +105,22 @@ pub struct InclusionTruthUpdate {
     pub target_block: u64,
     pub included_block: Option<u64>,
     pub relay: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MarketTruthUpdate {
+    pub tx_hash: H256,
+    pub outcome: String,
+    pub edge_real_value: f64,
+    pub adverse_selection_score: f64,
+    pub fill_quality_score: f64,
+    pub execution_toxicity_index: f64,
+    pub opportunity_consumed_ratio: f64,
+    pub late_entry_probability: f64,
+    pub competitor_capture_likelihood: f64,
+    pub edge_survival_probability: f64,
+    pub decay_velocity: f64,
+    pub execution_viability_window_ms: u64,
 }
 
 #[derive(Debug)]
