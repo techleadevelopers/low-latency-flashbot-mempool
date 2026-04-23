@@ -9,16 +9,18 @@ pub struct EdgeSurvivalInput {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct EdgeSurvivalMetrics {
-    pub edge_survival_probability: f64,
+pub struct EdgeSurvival {
+    pub survival_probability: f64,
     pub decay_velocity: f64,
     pub execution_viability_window_ms: u64,
 }
 
+pub type EdgeSurvivalMetrics = EdgeSurvival;
+
 pub struct EdgeSurvivalEngine;
 
 impl EdgeSurvivalEngine {
-    pub fn compute(input: EdgeSurvivalInput) -> EdgeSurvivalMetrics {
+    pub fn compute(input: EdgeSurvivalInput) -> EdgeSurvival {
         let pressure = input.competition_pressure.clamp(0.0, 1.0);
         let congestion = input.mempool_congestion.clamp(0.0, 1.0);
         let markout_degradation = input.historical_markout_degradation.clamp(0.0, 1.0);
@@ -28,11 +30,11 @@ impl EdgeSurvivalEngine {
             + markout_degradation * 0.25
             + latency_risk * 0.20)
             .clamp(0.0, 1.0);
-        let edge_survival_probability = (1.0 - decay_velocity).clamp(0.0, 1.0);
+        let survival_probability = (1.0 - decay_velocity).clamp(0.0, 1.0);
         let execution_viability_window_ms = ((1.0 - decay_velocity) * 5_000.0).max(100.0) as u64;
 
-        EdgeSurvivalMetrics {
-            edge_survival_probability,
+        EdgeSurvival {
+            survival_probability,
             decay_velocity,
             execution_viability_window_ms,
         }
