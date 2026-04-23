@@ -348,6 +348,8 @@ fn update_market_truth(
             historical_markout_degradation: 0.0,
             latency_ms: truth.latency_ms,
         },
+        expected_execution_value: truth.expected_profit_usd,
+        observed_best_execution_value: truth.expected_profit_usd.max(0.0),
     };
     let report = TruthPipeline::run(input);
     TruthPipeline::append_report(&event_store, &report);
