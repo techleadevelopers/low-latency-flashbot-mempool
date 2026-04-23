@@ -10,10 +10,9 @@ use crate::mev::market_truth::execution_outcome_real::{
 };
 use crate::mev::market_truth::markout_engine::{MarketSnapshot, MarkoutEngine, MarkoutMetrics};
 use crate::mev::state::event_store::{MarketTruthUpdate, StateEvent};
-use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MarketTruthInput {
     pub truth: InclusionTruth,
     pub entry_timestamp_ms: u64,
@@ -27,7 +26,7 @@ pub struct MarketTruthInput {
     pub survival: EdgeSurvivalInput,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct MarketTruthReport {
     pub tx_hash: ethers::types::H256,
     pub outcome: ExecutionOutcomeReal,
