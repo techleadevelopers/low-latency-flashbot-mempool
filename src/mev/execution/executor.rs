@@ -324,7 +324,7 @@ impl ExecutionEngine {
             pool_state_freshness_score,
         };
 
-        match SurvivalGate::evaluate(SurvivalGateConfig::from_env(), survival_input) {
+        match SurvivalGate::evaluate(SurvivalGateConfig::current(), survival_input) {
             SurvivalGateDecision::Allow => {}
             SurvivalGateDecision::Drop(reason) => {
                 self.dashboard.event(
