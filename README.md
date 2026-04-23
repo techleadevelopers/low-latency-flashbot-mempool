@@ -439,3 +439,767 @@ Como reduzir risco:
 - adicionar executor contract com callbacks de flashloan e asserts on-chain de lucro minimo.
 - exigir margem maior que gas variance e builder tip.
 - registrar todos os `MissReason` e ajustar thresholds por dados, nao por intuicao.
+
+## Arquitetura MEV senior: estado atual, garantias e limites
+
+Esta secao documenta a camada MEV atual do projeto como um sistema de execucao financeira adversarial. O objetivo nao e "mandar mais transacoes"; e preservar capital, executar apenas quando ha evidencia suficiente e reconstruir o estado de forma deterministica apos falha.
+
+Principio operacional:
+
+```text
+survival > correctness local > inclusion > profit teorico > volume
+```
+
+Em outras palavras:
+
+- detectar oportunidade nao significa executar
+- simular oportunidade nao significa lucrar
+- incluir bundle nao significa sucesso economico
+- sucesso real e lucro realizado/markout favoravel depois de gas, slippage, competicao e latencia
+
+### Visao em camadas
+
+A trilha MEV em `src/mev/` esta organizada em camadas independentes:
+
+- `amm/`: matematica deterministica de AMMs.
+- `simulation/`: simulacao de estado pos-victim e preflight de bundle.
+- `execution/`: payload, assinatura, nonce, lifecycle, replacement policy e finalizacao.
+- `competition/`: sinais de competicao por bloco, mempool pending e pressure map.
+- `inclusion/`: estrategia adaptativa de tip, relay e probabilidade de inclusao.
+- `inclusion_truth/`: verdade operacional de receipt/inclusao.
+- `state/`: event sourcing, snapshots, recovery, daemon de durabilidade e drift checking.
+- `market_truth/`: verdade economica pos-trade, markout, toxicidade e replay.
+- `feedback/`, `tip_discovery/`, `post_block/`: aprendizado leve baseado em outcomes.
+
+Cada camada tem uma responsabilidade. A camada de truth economico nao decide trades. A camada de recovery nao altera risco. A camada de competicao nao deve enviar transacao. Essa separacao existe para evitar que um ajuste de learning mude o comportamento de execucao sem controle.
+
+### Fluxo MEV end-to-end
+
+Fluxo atual de uma oportunidade backrun:
+
+1. `backrun.rs` assina pending txs via WebSocket.
+2. Decodifica swap grande e ignora ruido pequeno.
+3. Calcula score conservador inicial.
+4. Passa pelo meta-decision gate.
+5. Se possivel, constroi payload V2 deterministico.
+6. `ExecutionEngine` aplica gates live:
+   - `ALLOW_SEND`
+   - `survival_mode`
+   - private-only/public mempool policy
+   - payload obrigatorio
+   - competition forecast
+   - inclusion EV gate
+   - bundle preflight
+7. Reserva nonce local.
+8. Assina transacao.
+9. Envia bundle privado.
+10. Registra lifecycle + event store.
+11. `block_loop.rs` reconcilia receipt.
+12. `InclusionTruthEngine` classifica inclusao operacional.
+13. `ExecutionFinalizer` libera nonce/lifecycle.
+14. `Market Truth Layer` classifica outcome economico.
+15. Feedback/tip/competition/inclusion aprendem com resultado real.
+
+O sistema foi desenhado para rejeitar agressivamente. Um bot pequeno nao ganha por volume; ganha por evitar transacoes ruins.
+
+## Camada de competicao e inteligencia adversarial
+
+O sistema tem duas visoes de competicao: reativa e preditiva.
+
+### Sinais por bloco
+
+Modulo:
+
+- `src/mev/competition/signal_extractor.rs`
+
+Responsabilidades:
+
+- extrair swaps concorrentes em blocos confirmados
+- detectar interacoes AMM similares
+- estimar agressividade por ator com base em tip/value observavel
+- alimentar `CompetingTxSignal` para classificacao de `OUTBID`
+
+Esse modulo nao assume intencao privada. Ele usa apenas dados observaveis no bloco.
+
+### Pressao competitiva
+
+Modulo:
+
+- `src/mev/competition/pressure_map.rs`
+
+Mantem:
+
+- heatmap rolling por pool/router alvo
+- congestionamento de mempool
+- estimativa marginal de tip
+- pressao historica
+- pressao forward-looking
+
+Essa pressao afeta:
+
+- tip scaling
+- frequencia de execucao
+- seletividade minima
+
+Mas ela nao substitui simulacao nem risk/capital gates.
+
+### Inteligencia pre-block
+
+Modulo:
+
+- `src/mev/competition/mempool_intel.rs`
+
+Responsabilidades:
+
+- observar pending transactions recebidas pelo proprio WebSocket
+- agrupar por `router + token_in + token_out + selector`
+- estimar densidade pre-block
+- estimar intents similares
+- calcular `likely_outbid`
+- produzir `CompetitionForecast`
+
+Limitacao importante:
+
+- isso ve apenas o mempool que o seu provedor mostra
+- fluxo privado direto builder/relay nao aparece
+- portanto, `likely_outbid=false` nunca deve ser lido como "sem competicao"
+
+## Inclusion strategy e builder feedback
+
+Modulo:
+
+- `src/mev/inclusion.rs`
+
+O inclusion engine calcula:
+
+```text
+adjusted_ev = (expected_profit - gas - tip) * inclusion_probability
+```
+
+Ele rejeita se:
+
+- EV ajustado fica abaixo do minimo
+- probabilidade de inclusao fica ruim demais
+- competicao torna o tip economicamente injustificavel
+
+Tip dinamico considera:
+
+- lucro esperado
+- score de competicao
+- confianca
+- urgencia
+- falhas recentes
+- performance agregada de relay
+- pressure map e forecast pre-block
+
+Estado atual:
+
+- ja existe estrutura de relay stats e adaptive thresholds
+- ainda falta inferencia completa de builder identity
+- ainda falta mapa por builder/relay de bundle competition
+
+Proxima evolucao natural:
+
+```text
+src/mev/builder/
+  builder_intel.rs
+  relay_router.rs
+  bundle_competition_map.rs
+```
+
+Objetivo:
+
+- saber qual relay ignora bundles
+- saber qual builder exige mais tip por classe de oportunidade
+- parar de mandar bundle para endpoint ruim
+- ajustar tip por builder, nao por media global
+
+## Controle real de execucao
+
+O gargalo operacional mais perigoso era perda de estado em memoria. Foram adicionadas camadas de controle de execucao para evitar nonce corrompido, lifecycle perdido e duplicacao.
+
+### NonceManager
+
+Modulo:
+
+- `src/mev/execution/nonce_manager.rs`
+
+Responsabilidades:
+
+- reservar nonce local por wallet
+- reconciliar com pending nonce da chain
+- registrar nonce submetido
+- liberar reserva se assinatura falha antes de envio
+- finalizar nonce quando receipt/truth chega
+- snapshot/restore para recovery
+
+Regra conservadora:
+
+```text
+se chain pending nonce divergir, chain truth vence
+```
+
+Isso evita reutilizar nonce errado. O sistema prefere pular para o nonce seguro do que arriscar colisao.
+
+### TxLifecycleManager
+
+Modulo:
+
+- `src/mev/execution/tx_lifecycle.rs`
+
+Estados:
+
+```text
+Built
+Signed
+Submitted
+Included
+Dropped
+Outbid
+Replaced
+Cancelled
+Reverted
+```
+
+Garantias:
+
+- transicoes invalidas sao ignoradas
+- replay e idempotente
+- snapshot/restore preserva lifecycle
+- indexacao por `tx_hash` e `(wallet, nonce)`
+
+Isso transforma a execucao em uma state machine, nao em logs soltos.
+
+### Replacement policy
+
+Modulo:
+
+- `src/mev/execution/replacement_engine.rs`
+
+Estado atual:
+
+- policy conservadora de bump
+- limite de tentativas
+- cap de gas
+
+Ainda nao faz rebroadcast/cancel autonomo em runtime. O modulo existe para evitar que replacement futuro vire espiral de gas.
+
+## Recovery, snapshot e durabilidade
+
+A camada de durabilidade vive em:
+
+- `src/mev/state/event_store.rs`
+- `src/mev/state/snapshot.rs`
+- `src/mev/state/recovery.rs`
+- `src/mev/state/snapshot_daemon.rs`
+- `src/mev/state/drift_checker.rs`
+
+### Event Store
+
+Modulo:
+
+- `src/mev/state/event_store.rs`
+
+Formato:
+
+- append-only JSONL
+- segmentado
+- sequencia monotonia
+- timestamp em ms
+- replay incremental por sequence
+
+Eventos criticos:
+
+- `ExecutionEvent`
+- `NonceReserved`
+- `TxSigned`
+- `TxSubmitted`
+- `TxIncluded`
+- `TxDropped`
+- `TxReplaced`
+- `TxCancelled`
+- `RiskDecision`
+- `InclusionTruthUpdate`
+- `MarketTruthUpdate`
+
+Regras:
+
+- nunca muta evento antigo
+- rotaciona segmento quando passa do limite
+- flush controlado por threshold
+- replay ordenado por `(timestamp_ms, sequence)`
+
+Configuracao por env:
+
+```env
+MEV_EVENT_MAX_SEGMENT_SIZE=8388608
+MEV_EVENT_FLUSH_THRESHOLD=256
+```
+
+### Snapshot Store
+
+Modulo:
+
+- `src/mev/state/snapshot.rs`
+
+Snapshot contem:
+
+- nonce state por wallet
+- pending nonces
+- pending executions
+- lifecycle state map
+- active positions placeholder
+- risk summary
+- ultimo bloco processado
+- ultimo event sequence
+
+Snapshot nao guarda historico bruto. Ele guarda estado compacto para acelerar boot. O historico fica no event store.
+
+Save e atomico:
+
+```text
+write snapshot.tmp -> rename snapshot.json
+```
+
+Isso reduz chance de arquivo parcial apos crash.
+
+### Recovery Engine
+
+Modulo:
+
+- `src/mev/state/recovery.rs`
+
+Boot sequence:
+
+1. carrega ultimo snapshot
+2. aplica snapshot nos managers
+3. replay do event store apos `last_event_sequence`
+4. reconstrucao de `NonceManager`
+5. reconstrucao de `TxLifecycleManager`
+6. instala event store nos managers
+7. sistema retoma sem duplicar nonce/lifecycle
+
+Regra central:
+
+```text
+estado apos recovery == estado antes do crash, do ponto de vista da state machine
+```
+
+### Snapshot Daemon
+
+Modulo:
+
+- `src/mev/state/snapshot_daemon.rs`
+
+Responsabilidades:
+
+- rodar off-path em Tokio task
+- salvar snapshot a cada intervalo
+- flush do event store por threshold
+- rotacao de segmento
+- snapshot forcado via canal bounded
+- tolerar falhas silenciosamente e tentar novamente no ciclo seguinte
+
+Configuracao:
+
+```env
+MEV_SNAPSHOT_INTERVAL_MS=30000
+MEV_EVENT_FLUSH_THRESHOLD=256
+MEV_EVENT_MAX_SEGMENT_SIZE=8388608
+```
+
+Default e conservador: nao agressivo demais para nao competir com hot path.
+
+### Drift Checker
+
+Modulo:
+
+- `src/mev/state/drift_checker.rs`
+
+Compara snapshot e live state:
+
+- mismatch de nonce por wallet
+- divergencia de lifecycle
+- pending execution ausente
+- desvio de risk summary
+
+Output:
+
+```rust
+StateDriftReport {
+    drift_detected: bool,
+    severity: Low | Medium | High,
+    mismatches: Vec<String>,
+}
+```
+
+Se drift e `High` no startup:
+
+- nao para execucao
+- loga warning
+- salva snapshot forcado de resync
+
+Isso e self-healing de estado, nao motor de decisao.
+
+## Inclusion Truth vs Market Truth
+
+Antes, o sistema sabia principalmente:
+
+```text
+included / not included / reverted / outbid / late
+```
+
+Agora existe uma camada adicional:
+
+```text
+economic outcome truth
+```
+
+Principio:
+
+```text
+Execution success is not inclusion.
+Execution success is economic outcome.
+```
+
+### InclusionTruthEngine
+
+Modulo:
+
+- `src/mev/inclusion_truth.rs`
+
+Classifica outcome operacional:
+
+- `Included`
+- `NotIncluded`
+- `Outbid`
+- `Reverted`
+- `LateInclusion`
+
+Base:
+
+- receipt
+- block inclusion
+- gas real
+- competing signals
+- target block
+
+Isso ainda nao diz se o trade foi bom economicamente.
+
+### Market Truth Layer
+
+Modulos:
+
+- `src/mev/market_truth/execution_outcome_real.rs`
+- `src/mev/market_truth/markout_engine.rs`
+- `src/mev/market_truth/competition_reality.rs`
+- `src/mev/market_truth/edge_survival.rs`
+- `src/mev/market_truth/execution_replay_engine.rs`
+- `src/mev/market_truth/truth_pipeline.rs`
+
+Essa camada responde perguntas que inclusion truth nao responde:
+
+- fizemos dinheiro ou so fomos incluidos?
+- o fill foi toxico?
+- entramos tarde em alpha ja consumido?
+- competidor capturou edge antes da nossa execucao?
+- a inclusao foi economicamente irrelevante?
+
+### ExecutionOutcomeReal
+
+Enum:
+
+```rust
+pub enum ExecutionOutcomeReal {
+    IncludedProfit,
+    IncludedLoss,
+    IncludedAdverseSelection,
+    IncludedToxicFill,
+    IncludedLateFill,
+    IncludedPartialCapture,
+    MissedOpportunity,
+    NotIncluded,
+    Reverted,
+}
+```
+
+Derivado apenas de:
+
+- resultado de execucao
+- entry price
+- exit/markout price
+- fill quality
+- slippage
+- latency
+- post-trade price movement
+
+Nao usa estrategia nem score original.
+
+### Markout Engine
+
+Modulo:
+
+- `src/mev/market_truth/markout_engine.rs`
+
+Formula:
+
+```text
+M(t, delta) = P(t + delta) - P(entry)
+```
+
+Deltas:
+
+- `100ms`
+- `500ms`
+- `1s`
+- `5s`
+
+Metricas:
+
+- `edge_real_value`
+- `adverse_selection_score`
+- `fill_quality_score`
+- `execution_toxicity_index`
+
+Regra:
+
+- usa somente dados de mercado apos execucao
+- deterministico
+- replayable
+
+### Competition Reality
+
+Modulo:
+
+- `src/mev/market_truth/competition_reality.rs`
+
+Modelo de consumo da oportunidade:
+
+- `opportunity_consumed_ratio`
+- `pre_execution_alpha_decay_estimate`
+- `late_entry_probability`
+- `competitor_capture_likelihood`
+
+Opera por cluster:
+
+```text
+pool + token_in + token_out
+```
+
+Nao assume intencao. Infere apenas de dados observaveis.
+
+### Edge Survival
+
+Modulo:
+
+- `src/mev/market_truth/edge_survival.rs`
+
+Metricas:
+
+- `edge_survival_probability`
+- `decay_velocity`
+- `execution_viability_window_ms`
+
+Incorpora:
+
+- competition pressure
+- mempool congestion
+- historical markout degradation
+- latency risk
+
+### Truth Pipeline
+
+Modulo:
+
+- `src/mev/market_truth/truth_pipeline.rs`
+
+Fluxo:
+
+```text
+InclusionTruth
+  -> MarkoutEngine
+  -> CompetitionRealityEngine
+  -> EdgeSurvivalEngine
+  -> ExecutionOutcomeReal
+  -> EventStore::MarketTruthUpdate
+```
+
+Integracao atual:
+
+- hook pos-receipt em `block_loop.rs`
+- append-only em `EventStore`
+- nao altera decision flow
+- nao altera risk
+- nao altera strategy scoring
+
+Limitacao honesta:
+
+- o hook atual ainda nao recebe feed real de snapshots de mercado
+- se nao ha snapshots de mercado, o sistema nao inventa markout
+- nesse caso, outcome incluido tende a ser conservador/partial capture ate que dados reais sejam conectados
+
+Proximo passo ideal:
+
+```text
+src/mev/market_data/
+  pool_price_snapshots.rs
+  markout_sampler.rs
+  replay_snapshot_loader.rs
+```
+
+## Replay offline deterministico
+
+Modulo:
+
+- `src/mev/market_truth/execution_replay_engine.rs`
+
+Objetivo:
+
+- reproduzir execucoes passadas sem depender de RPC live
+- comparar execucao real contra melhor execucao hipotetica observavel
+- calcular alpha perdido
+- gerar mapa de ineficiencia
+
+Outputs:
+
+- `lost_alpha_per_trade`
+- `execution_inefficiency_map`
+- `missed_opportunity_heatmap`
+
+Isso e essencial para calibrar o sistema sem autoengano. O replay deve responder:
+
+```text
+o trade era bom?
+entramos tarde?
+o fill foi ruim?
+o lucro teorico existiu mesmo apos markout?
+```
+
+## Configuracao de durabilidade recomendada
+
+Producao conservadora:
+
+```env
+MEV_SNAPSHOT_INTERVAL_MS=30000
+MEV_EVENT_FLUSH_THRESHOLD=128
+MEV_EVENT_MAX_SEGMENT_SIZE=8388608
+```
+
+Ambiente mais agressivo:
+
+```env
+MEV_SNAPSHOT_INTERVAL_MS=10000
+MEV_EVENT_FLUSH_THRESHOLD=32
+MEV_EVENT_MAX_SEGMENT_SIZE=4194304
+```
+
+Trade-off:
+
+- flush menor reduz perda potencial apos crash, mas aumenta I/O
+- snapshot frequente melhora recovery, mas pode competir por disco
+- segmento menor facilita rotacao/replay parcial, mas cria mais arquivos
+
+O daemon roda off-path, mas disco lento ainda pode afetar o processo se o sistema inteiro estiver sob pressao. Em producao real, usar SSD local e separar storage de logs pesados.
+
+## O que esta protegido hoje
+
+Protegido:
+
+- nonce reservado em memoria e reconstruivel
+- tx signed/submitted reconstruivel por event replay
+- lifecycle replay idempotente
+- event store append-only
+- snapshot compacto
+- drift check no boot
+- daemon de snapshot/flush/rotation
+- inclusion truth por receipt
+- market truth append-only
+- survival-mode hard gate ja existe no executor
+
+Parcialmente protegido:
+
+- realized PnL positivo ainda precisa de balance deltas reais por token
+- markout real depende de feed de snapshots de mercado
+- builder identity ainda nao e inferido plenamente
+- chain pending nonce reconciliation existe na recovery layer, mas precisa ser chamado com wallets conhecidas no boot para maxima seguranca
+
+Nao protegido ainda:
+
+- crash no meio de uma chamada RPC antes do event append pode deixar uma acao externa sem evento local se o evento ainda nao foi gravado
+- orderflow privado de competidores nao e observavel
+- relay/builder simulation real ainda nao substitui completamente preflight local
+- pool/tick cache completo ainda nao existe
+
+## Onde o sistema ainda perde dinheiro
+
+Mesmo com as camadas atuais, o sistema ainda pode perder em:
+
+- latencia de pending tx lookup
+- estado AMM stale
+- builder nao incluindo bundle
+- competidor com orderflow privado
+- fill toxico que parece lucrativo no bloco mas degrada no markout
+- gas/tip repricing entre simulacao e inclusao
+- missing market data para classificacao economica completa
+
+O ponto mais importante:
+
+```text
+uma execucao incluida e operacionalmente correta, mas pode ser economicamente ruim
+```
+
+Por isso a Market Truth Layer existe.
+
+## Roadmap senior recomendado
+
+Ordem recomendada para evoluir sem aumentar risco:
+
+1. Conectar snapshots reais de mercado ao `markout_engine`.
+2. Persistir `MarketTruthUpdate` tambem em snapshot summary.
+3. Implementar balance delta real por token para PnL positivo.
+4. Adicionar builder identity inference.
+5. Criar `relay_router.rs` por classe de oportunidade.
+6. Implementar pool/tick cache por logs.
+7. Fazer replay deterministico diario e recalibrar thresholds off-path.
+8. Adicionar transaction replacement real apenas apos PnL/markout confiaveis.
+
+Nao recomendado agora:
+
+- trocar Rust por Go no hot path
+- aumentar volume antes de markout real
+- abrir public mempool fallback
+- reduzir thresholds para "ver mais oportunidades"
+- confiar em lucro estimado sem balance delta
+
+## Resumo honesto do nivel atual
+
+O sistema hoje esta no nivel:
+
+```text
+MEV research/execution engine com:
+  - execucao conservadora
+  - awareness adversarial
+  - recovery deterministico
+  - inclusion truth
+  - market truth scaffold
+  - durability daemon
+```
+
+Ainda nao e "top-tier institutional searcher" porque faltam:
+
+- visao completa de mempool privado
+- builder/relay intelligence por contraparte
+- market snapshots reais integrados ao markout
+- balance-delta accounting completo
+- cache local completo de pools/ticks
+- co-location/network stack ultra otimizada
+
+Mas a base correta foi estabelecida:
+
+```text
+decidir pouco,
+executar com cuidado,
+persistir tudo,
+reconstruir deterministicamente,
+e julgar resultado por verdade economica, nao por inclusao.
+```
