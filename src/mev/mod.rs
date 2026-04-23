@@ -15,6 +15,7 @@ pub mod pnl;
 pub mod post_block;
 pub mod simulation;
 pub mod state;
+pub mod survival;
 pub mod tip_discovery;
 
 use crate::config::{Config, MevStrategy};
