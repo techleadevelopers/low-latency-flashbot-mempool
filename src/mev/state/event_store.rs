@@ -116,11 +116,15 @@ pub struct MarketTruthUpdate {
     pub fill_quality_score: f64,
     pub execution_toxicity_index: f64,
     pub opportunity_consumed_ratio: f64,
+    pub alpha_decay_estimate: f64,
     pub late_entry_probability: f64,
     pub competitor_capture_likelihood: f64,
     pub edge_survival_probability: f64,
     pub decay_velocity: f64,
     pub execution_viability_window_ms: u64,
+    pub lost_alpha: f64,
+    pub inefficiency_score: f64,
+    pub missed_opportunity: f64,
 }
 
 #[derive(Debug)]
