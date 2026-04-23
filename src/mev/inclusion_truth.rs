@@ -35,6 +35,8 @@ pub struct InclusionTruth {
     pub relay: String,
     pub latency_ms: u128,
     pub tip_wei: U256,
+    pub gas_used: U256,
+    pub effective_gas_price: U256,
     pub expected_profit_usd: f64,
     pub competition_score: f64,
 }
@@ -74,6 +76,8 @@ impl InclusionTruthEngine {
         tx_hash: H256,
         included_block: Option<U64>,
         success: Option<bool>,
+        gas_used: Option<U256>,
+        effective_gas_price: Option<U256>,
         current_block: u64,
         competing: &[CompetingTxSignal],
     ) -> Option<InclusionTruth> {
@@ -105,6 +109,8 @@ impl InclusionTruthEngine {
             relay: record.relay,
             latency_ms,
             tip_wei: record.tip_wei,
+            gas_used: gas_used.unwrap_or_default(),
+            effective_gas_price: effective_gas_price.unwrap_or_default(),
             expected_profit_usd: record.expected_profit_usd,
             competition_score: record.competition_score,
         };
@@ -131,6 +137,8 @@ impl InclusionTruthEngine {
                     relay: record.relay,
                     latency_ms: record.submitted_at.elapsed().as_millis(),
                     tip_wei: record.tip_wei,
+                    gas_used: U256::zero(),
+                    effective_gas_price: U256::zero(),
                     expected_profit_usd: record.expected_profit_usd,
                     competition_score: record.competition_score,
                 };
@@ -164,9 +172,19 @@ impl InclusionTruthEngine {
                 .as_ref()
                 .and_then(|receipt| receipt.status)
                 .map(|status| status.as_u64() == 1);
-            if let Some(truth) =
-                self.reconcile_receipt(hash, included_block, success, current_block, competing)
-            {
+            let gas_used = receipt.as_ref().and_then(|receipt| receipt.gas_used);
+            let effective_gas_price = receipt
+                .as_ref()
+                .and_then(|receipt| receipt.effective_gas_price);
+            if let Some(truth) = self.reconcile_receipt(
+                hash,
+                included_block,
+                success,
+                gas_used,
+                effective_gas_price,
+                current_block,
+                competing,
+            ) {
                 outcomes.push(truth);
             }
         }
