@@ -9,6 +9,7 @@ use crate::mev::execution::tx_lifecycle::TxLifecycleManager;
 use crate::mev::feedback::{ExecutionFeedback, FailureReason, FeedbackEngine};
 use crate::mev::inclusion::{InclusionContext, InclusionEngine};
 use crate::mev::inclusion_truth::{InclusionTruthEngine, PendingBundleRecord};
+use crate::mev::market_truth::edge_survival::{EdgeSurvivalEngine, EdgeSurvivalInput};
 use crate::mev::opportunity::{wei_to_eth_f64, MevOpportunity};
 use crate::mev::pnl::tracker::PnlTracker;
 use crate::mev::simulation::bundle_simulator::{BundleSimulationRequest, BundleSimulator};
@@ -18,6 +19,9 @@ use crate::mev::state::snapshot::snapshot_daemon::{
     build_live_snapshot, spawn_snapshot_daemon, state_dir as mev_state_dir, SnapshotDaemonConfig,
 };
 use crate::mev::state::snapshot::{RiskStateSummary, SnapshotStore};
+use crate::mev::survival::survival_gate::{
+    SurvivalDropReason, SurvivalGate, SurvivalGateConfig, SurvivalGateDecision, SurvivalGateInput,
+};
 use crate::rpc::RpcFleet;
 use ethers::prelude::*;
 use ethers::types::transaction::eip2718::TypedTransaction;
@@ -234,25 +238,6 @@ impl ExecutionEngine {
             return Ok(());
         }
 
-        let Some(mut payload) = opportunity.execution_payload.clone() else {
-            self.dashboard.event(
-                "warn",
-                format!(
-                    "live MEV blocked victim={:?}: no execution payload attached",
-                    opportunity.victim_tx
-                ),
-            );
-            self.record_miss(MissReason::PayloadUnavailable);
-            return Ok(());
-        };
-
-        let endpoint = self.rpc_fleet.send_endpoint();
-        let provider = endpoint.provider.clone();
-        let adaptive_thresholds = self
-            .feedback
-            .lock()
-            .expect("feedback engine lock")
-            .thresholds();
         let feedback_metrics = self
             .feedback
             .lock()
@@ -282,6 +267,121 @@ impl ExecutionEngine {
                 pressure.record_forecast(opportunity.target, forecast);
             }
         }
+
+        let max_pending_age_ms = self.config.mev.max_pending_age_ms.max(1);
+        let estimated_latency_ms = opportunity.age_ms().min(u128::from(u64::MAX)) as u64;
+        let forecast_probability = forecast
+            .map(|forecast| forecast.pressure_probability)
+            .unwrap_or(opportunity.score.competition_score as f64 / 100.0)
+            .clamp(0.0, 1.0);
+        let mempool_congestion = pressure
+            .map(|pressure| pressure.mempool_congestion)
+            .or_else(|| forecast.map(|forecast| forecast.mempool_density))
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+        let pressure_heat = pressure
+            .map(|pressure| pressure.heat.max(pressure.forward_pressure))
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+        let historical_markout_degradation =
+            (1.0 - feedback_metrics.expected_vs_real_ratio).clamp(0.0, 1.0);
+        let edge_survival = EdgeSurvivalEngine::compute(EdgeSurvivalInput {
+            competition_pressure: forecast_probability.max(pressure_heat),
+            mempool_congestion,
+            historical_markout_degradation,
+            latency_ms: opportunity.age_ms(),
+        });
+        let competitor_capture_likelihood = (forecast_probability * 0.60
+            + pressure_heat * 0.25
+            + if forecast
+                .map(|forecast| forecast.likely_outbid)
+                .unwrap_or(false)
+            {
+                0.20
+            } else {
+                0.0
+            })
+        .clamp(0.0, 1.0);
+        let latency_risk_score =
+            (estimated_latency_ms as f64 / max_pending_age_ms as f64).clamp(0.0, 1.0);
+        let similar_pending_pressure = forecast
+            .map(|forecast| forecast.similar_pending as f64 / 32.0)
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+        let mempool_staleness_score = (latency_risk_score * 0.65
+            + mempool_congestion * 0.20
+            + similar_pending_pressure * 0.15)
+            .clamp(0.0, 1.0);
+        let pool_state_freshness_score =
+            (1.0 - pressure_heat * 0.55 - mempool_staleness_score * 0.45).clamp(0.0, 1.0);
+        let survival_input = SurvivalGateInput {
+            edge_survival_probability: edge_survival.survival_probability,
+            execution_viability_window_ms: edge_survival.execution_viability_window_ms,
+            estimated_latency_ms,
+            competitor_capture_likelihood,
+            latency_risk_score,
+            mempool_staleness_score,
+            pool_state_freshness_score,
+        };
+
+        match SurvivalGate::evaluate(SurvivalGateConfig::from_env(), survival_input) {
+            SurvivalGateDecision::Allow => {}
+            SurvivalGateDecision::Drop(reason) => {
+                self.dashboard.event(
+                    "info",
+                    format!(
+                        "survival gate dropped victim={:?} reason={} survival={:.3} window_ms={} estimated_latency_ms={} capture={:.3} latency_risk={:.3} mempool_stale={:.3} pool_fresh={:.3}",
+                        opportunity.victim_tx,
+                        reason.as_str(),
+                        survival_input.edge_survival_probability,
+                        survival_input.execution_viability_window_ms,
+                        survival_input.estimated_latency_ms,
+                        survival_input.competitor_capture_likelihood,
+                        survival_input.latency_risk_score,
+                        survival_input.mempool_staleness_score,
+                        survival_input.pool_state_freshness_score
+                    ),
+                );
+                self.record_miss(survival_miss_reason(reason));
+                self.record_feedback(ExecutionFeedback {
+                    success: false,
+                    included: false,
+                    profit_expected: wei_to_eth_f64(opportunity.score.slippage_adjusted_profit_wei)
+                        * self.config.mev.eth_usd_price,
+                    profit_realized: 0.0,
+                    gas_used: wei_to_eth_f64(opportunity.score.execution_cost_wei)
+                        * self.config.mev.eth_usd_price,
+                    tip_used: 0.0,
+                    competition_score: forecast_probability
+                        .max(opportunity.score.competition_score as f64 / 100.0),
+                    confidence_score: opportunity.score.confidence_score as f64 / 100.0,
+                    relay_used: self.config.flashbots_relay.clone(),
+                    block_delay: 0,
+                    failure_reason: Some(survival_failure_reason(reason)),
+                });
+                return Ok(());
+            }
+        }
+
+        let Some(mut payload) = opportunity.execution_payload.clone() else {
+            self.dashboard.event(
+                "warn",
+                format!(
+                    "live MEV blocked victim={:?}: no execution payload attached",
+                    opportunity.victim_tx
+                ),
+            );
+            self.record_miss(MissReason::PayloadUnavailable);
+            return Ok(());
+        };
+
+        let endpoint = self.rpc_fleet.send_endpoint();
+        let provider = endpoint.provider.clone();
+        let adaptive_thresholds = self
+            .feedback
+            .lock()
+            .expect("feedback engine lock")
+            .thresholds();
         let pressure_tip_factor = pressure
             .map(|pressure| 1.0 + pressure.heat * 0.65 + pressure.mempool_congestion * 0.25)
             .unwrap_or(1.0);
@@ -670,6 +770,28 @@ impl ExecutionEngine {
                 thresholds.execution_frequency_factor
             ),
         );
+    }
+}
+
+fn survival_miss_reason(reason: SurvivalDropReason) -> MissReason {
+    match reason {
+        SurvivalDropReason::CompetitorCapture => MissReason::HighCompetition,
+        SurvivalDropReason::EdgeDecay
+        | SurvivalDropReason::ViabilityWindowExceeded
+        | SurvivalDropReason::LatencyRisk
+        | SurvivalDropReason::MempoolStale
+        | SurvivalDropReason::PoolStateDecayed => MissReason::LatencyExceeded,
+    }
+}
+
+fn survival_failure_reason(reason: SurvivalDropReason) -> FailureReason {
+    match reason {
+        SurvivalDropReason::CompetitorCapture => FailureReason::Outbid,
+        SurvivalDropReason::EdgeDecay
+        | SurvivalDropReason::ViabilityWindowExceeded
+        | SurvivalDropReason::LatencyRisk
+        | SurvivalDropReason::MempoolStale
+        | SurvivalDropReason::PoolStateDecayed => FailureReason::StaleState,
     }
 }
 
