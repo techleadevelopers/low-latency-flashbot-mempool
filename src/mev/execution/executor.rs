@@ -3,12 +3,21 @@ use crate::dashboard::DashboardHandle;
 use crate::mev::analytics::missed_opportunities::{MissReason, MissedOpportunityTracker};
 use crate::mev::block_loop::{ExecutionEvent, LearningRuntime};
 use crate::mev::capital::CapitalManager;
+use crate::mev::execution::nonce_manager::{NonceManager, NonceReservation};
+use crate::mev::execution::replacement_engine::ReplacementPolicy;
+use crate::mev::execution::tx_lifecycle::TxLifecycleManager;
 use crate::mev::feedback::{ExecutionFeedback, FailureReason, FeedbackEngine};
 use crate::mev::inclusion::{InclusionContext, InclusionEngine};
 use crate::mev::inclusion_truth::{InclusionTruthEngine, PendingBundleRecord};
 use crate::mev::opportunity::{wei_to_eth_f64, MevOpportunity};
 use crate::mev::pnl::tracker::PnlTracker;
 use crate::mev::simulation::bundle_simulator::{BundleSimulationRequest, BundleSimulator};
+use crate::mev::state::recovery::RecoveryEngine;
+use crate::mev::state::snapshot::drift_checker::{compare, DriftSeverity};
+use crate::mev::state::snapshot::snapshot_daemon::{
+    build_live_snapshot, spawn_snapshot_daemon, state_dir as mev_state_dir, SnapshotDaemonConfig,
+};
+use crate::mev::state::snapshot::{RiskStateSummary, SnapshotStore};
 use crate::rpc::RpcFleet;
 use ethers::prelude::*;
 use ethers::types::transaction::eip2718::TypedTransaction;
@@ -27,6 +36,8 @@ pub struct ExecutionEngine {
     inclusion: Arc<Mutex<InclusionEngine>>,
     feedback: Arc<Mutex<FeedbackEngine>>,
     truth: Arc<Mutex<InclusionTruthEngine>>,
+    nonce: Arc<Mutex<NonceManager>>,
+    lifecycle: Arc<Mutex<TxLifecycleManager>>,
     learning: Option<LearningRuntime>,
 }
 
@@ -37,6 +48,11 @@ impl ExecutionEngine {
         dashboard: DashboardHandle,
         capital: Arc<Mutex<CapitalManager>>,
     ) -> Self {
+        let mut nonce = NonceManager::new(256);
+        let mut lifecycle = TxLifecycleManager::new(256);
+        let _durability = install_recovery_hook(&config, &dashboard, &mut nonce, &mut lifecycle);
+        let nonce = Arc::new(Mutex::new(nonce));
+        let lifecycle = Arc::new(Mutex::new(lifecycle));
         Self {
             config: config.clone(),
             rpc_fleet,
@@ -47,13 +63,31 @@ impl ExecutionEngine {
             inclusion: Arc::new(Mutex::new(InclusionEngine::from_config(&config))),
             feedback: Arc::new(Mutex::new(FeedbackEngine::new(256))),
             truth: Arc::new(Mutex::new(InclusionTruthEngine::new(256, 2))),
+            nonce,
+            lifecycle,
             learning: None,
         }
     }
 
     pub fn with_learning_runtime(mut self, learning: LearningRuntime) -> Self {
+        let nonce_handle = learning.nonce();
+        let lifecycle_handle = learning.lifecycle();
+        if let (Ok(mut nonce), Ok(mut lifecycle)) = (nonce_handle.lock(), lifecycle_handle.lock()) {
+            if let Some(event_store) =
+                install_recovery_hook(&self.config, &self.dashboard, &mut nonce, &mut lifecycle)
+            {
+                start_snapshot_daemon(
+                    &self.config,
+                    event_store,
+                    nonce_handle.clone(),
+                    lifecycle_handle.clone(),
+                );
+            }
+        }
         self.feedback = learning.feedback();
         self.inclusion = learning.inclusion();
+        self.nonce = learning.nonce();
+        self.lifecycle = learning.lifecycle();
         self.learning = Some(learning);
         self
     }
@@ -363,19 +397,61 @@ impl ExecutionEngine {
             .sender_private_key
             .parse::<LocalWallet>()?
             .with_chain_id(self.config.chain_id);
+        let wallet_address = wallet.address();
+        let mut reserved_nonce: Option<NonceReservation> = None;
+        let mut signed_gas_price = U256::zero();
         if payload.tx.0.is_empty() {
-            let nonce = provider
+            let chain_nonce = provider
                 .get_transaction_count(wallet.address(), Some(BlockNumber::Pending.into()))
                 .await?;
+            let reservation = {
+                let mut nonce = self.nonce.lock().expect("nonce manager lock");
+                nonce.reserve(wallet.address(), chain_nonce)
+            };
             let gas_price = provider.get_gas_price().await?;
             let tip_per_gas = if payload.gas_limit > 0 {
                 inclusion_plan.tip_wei / U256::from(payload.gas_limit)
             } else {
                 U256::zero()
             };
-            payload.tx =
-                sign_executor_transaction(&wallet, &payload, nonce, gas_price + tip_per_gas)
-                    .await?;
+            signed_gas_price = gas_price + tip_per_gas;
+            let replacement_policy = ReplacementPolicy::conservative(
+                signed_gas_price.saturating_mul(U256::from(self.config.mev.gas_safety_margin_bps))
+                    / U256::from(10_000u64),
+            );
+            let replacement_decision = replacement_policy.decide(signed_gas_price, 0, true);
+            if !replacement_decision.replace && replacement_decision.reason != "fee bump allowed" {
+                self.nonce
+                    .lock()
+                    .expect("nonce manager lock")
+                    .release_unsubmitted(reservation);
+                self.dashboard.event(
+                    "warn",
+                    format!(
+                        "live MEV blocked victim={:?}: replacement policy rejected initial tx: {}",
+                        opportunity.victim_tx, replacement_decision.reason
+                    ),
+                );
+                return Ok(());
+            }
+            payload.tx = match sign_executor_transaction(
+                &wallet,
+                &payload,
+                reservation.nonce,
+                signed_gas_price,
+            )
+            .await
+            {
+                Ok(raw) => raw,
+                Err(err) => {
+                    self.nonce
+                        .lock()
+                        .expect("nonce manager lock")
+                        .release_unsubmitted(reservation);
+                    return Err(err);
+                }
+            };
+            reserved_nonce = Some(reservation);
         }
         let relay_url = Url::parse(&self.config.flashbots_relay)?;
         let relay_signer = wallet.clone();
@@ -433,19 +509,56 @@ impl ExecutionEngine {
         match bundle_result {
             Ok(pending) => {
                 let tx_hash = signed_tx_hash(&payload.tx);
+                let reservation = reserved_nonce.unwrap_or(NonceReservation {
+                    address: wallet_address,
+                    nonce: U256::zero(),
+                    generation: 0,
+                });
                 let event = ExecutionEvent {
+                    opportunity_id: opportunity.id.clone(),
                     bundle_hash: pending.bundle_hash,
                     tx_hash,
+                    wallet: wallet_address,
+                    nonce: reservation.nonce,
+                    nonce_generation: reservation.generation,
                     target_block: (block + 1).as_u64(),
                     submitted_at: std::time::Instant::now(),
                     relay: self.config.flashbots_relay.clone(),
                     tip_wei: inclusion_plan.tip_wei,
+                    gas_price_wei: signed_gas_price,
                     expected_profit_usd: payload.expected_profit * self.config.mev.eth_usd_price,
                     competition_score: opportunity.score.competition_score as f64 / 100.0,
                 };
                 if let Some(learning) = &self.learning {
                     learning.register_execution(event);
                 } else {
+                    self.lifecycle
+                        .lock()
+                        .expect("tx lifecycle lock")
+                        .register_signed(
+                            event.opportunity_id.clone(),
+                            event.tx_hash,
+                            event.wallet,
+                            event.nonce,
+                            event.target_block,
+                            event.gas_price_wei,
+                            event.tip_wei,
+                        );
+                    self.lifecycle
+                        .lock()
+                        .expect("tx lifecycle lock")
+                        .mark_submitted(event.tx_hash);
+                    self.nonce
+                        .lock()
+                        .expect("nonce manager lock")
+                        .mark_submitted(
+                            NonceReservation {
+                                address: event.wallet,
+                                nonce: event.nonce,
+                                generation: event.nonce_generation,
+                            },
+                            event.tx_hash,
+                        );
                     self.truth
                         .lock()
                         .expect("truth engine lock")
@@ -562,6 +675,125 @@ impl ExecutionEngine {
 
 fn signed_tx_hash(raw: &Bytes) -> H256 {
     H256::from(ethers::utils::keccak256(raw.as_ref()))
+}
+
+fn install_recovery_hook(
+    config: &Config,
+    dashboard: &DashboardHandle,
+    nonce: &mut NonceManager,
+    lifecycle: &mut TxLifecycleManager,
+) -> Option<Arc<crate::mev::state::event_store::EventStore>> {
+    let state_dir = mev_state_dir(&config.storage_path);
+    match RecoveryEngine::open(&state_dir) {
+        Ok(recovery) => {
+            let event_store = recovery.event_store();
+            match recovery.recover_managers(nonce, lifecycle) {
+                Ok(report) => dashboard.event(
+                    "info",
+                    format!(
+                        "MEV recovery loaded snapshot={} snapshot_seq={} replayed={} last_seq={}",
+                        report.snapshot_loaded,
+                        report.snapshot_sequence,
+                        report.events_replayed,
+                        report.last_sequence
+                    ),
+                ),
+                Err(err) => dashboard.event(
+                    "error",
+                    format!("MEV recovery failed, starting guarded empty state: {err}"),
+                ),
+            }
+            run_startup_drift_check(
+                config,
+                dashboard,
+                &state_dir,
+                event_store.current_sequence(),
+                nonce,
+                lifecycle,
+            );
+            nonce.set_event_store(event_store.clone());
+            lifecycle.set_event_store(event_store.clone());
+            Some(event_store)
+        }
+        Err(err) => {
+            dashboard.event(
+                "error",
+                format!("MEV recovery store unavailable, in-memory state only: {err}"),
+            );
+            None
+        }
+    }
+}
+
+fn run_startup_drift_check(
+    config: &Config,
+    dashboard: &DashboardHandle,
+    state_dir: &std::path::Path,
+    last_event_sequence: u64,
+    nonce: &NonceManager,
+    lifecycle: &TxLifecycleManager,
+) {
+    let Ok(snapshot_store) = SnapshotStore::new(state_dir.join("snapshots")) else {
+        return;
+    };
+    let Ok(Some(snapshot)) = snapshot_store.load_latest() else {
+        return;
+    };
+    let live = build_live_snapshot(
+        nonce,
+        lifecycle,
+        0,
+        last_event_sequence,
+        RiskStateSummary::default(),
+    );
+    let report = compare(&snapshot, &live);
+    if report.drift_detected {
+        dashboard.event(
+            if matches!(report.severity, DriftSeverity::High) {
+                "warn"
+            } else {
+                "info"
+            },
+            format!(
+                "MEV recovery drift severity={:?} mismatches={}",
+                report.severity,
+                report.mismatches.len()
+            ),
+        );
+    }
+    if matches!(report.severity, DriftSeverity::High) {
+        let forced = build_live_snapshot(
+            nonce,
+            lifecycle,
+            0,
+            last_event_sequence,
+            RiskStateSummary::default(),
+        );
+        let _ = snapshot_store.save(&forced);
+        dashboard.event(
+            "warn",
+            format!(
+                "MEV recovery forced snapshot resync storage={}",
+                config.storage_path.display()
+            ),
+        );
+    }
+}
+
+fn start_snapshot_daemon(
+    config: &Config,
+    event_store: Arc<crate::mev::state::event_store::EventStore>,
+    nonce: Arc<Mutex<NonceManager>>,
+    lifecycle: Arc<Mutex<TxLifecycleManager>>,
+) {
+    let daemon_config = SnapshotDaemonConfig::from_env();
+    let _handle = spawn_snapshot_daemon(
+        mev_state_dir(&config.storage_path),
+        daemon_config,
+        event_store,
+        nonce,
+        lifecycle,
+    );
 }
 
 fn tx_selector(tx: &Transaction) -> Option<[u8; 4]> {
