@@ -6,6 +6,13 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default)]
+pub struct ReplayResult {
+    pub lost_alpha: f64,
+    pub inefficiency_score: f64,
+    pub missed_opportunity: f64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayExecutionInput {
     pub tx_hash: H256,
@@ -34,6 +41,30 @@ pub struct ReplayOutput {
 pub struct ExecutionReplayEngine;
 
 impl ExecutionReplayEngine {
+    pub fn compute_single(
+        actual_execution: f64,
+        observed_best_execution: f64,
+        expected_execution: f64,
+        included: bool,
+    ) -> ReplayResult {
+        let lost_alpha = (observed_best_execution - actual_execution).max(0.0);
+        let denominator = expected_execution
+            .abs()
+            .max(observed_best_execution.abs())
+            .max(1.0);
+        let inefficiency_score = (lost_alpha / denominator).clamp(0.0, 1.0);
+        let missed_opportunity = if included {
+            0.0
+        } else {
+            (observed_best_execution.max(0.0) / denominator).clamp(0.0, 1.0)
+        };
+        ReplayResult {
+            lost_alpha,
+            inefficiency_score,
+            missed_opportunity,
+        }
+    }
+
     pub fn replay_event_store(
         event_dir: impl AsRef<Path>,
         inputs: &[ReplayExecutionInput],
