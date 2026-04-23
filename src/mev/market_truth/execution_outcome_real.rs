@@ -51,7 +51,7 @@ pub fn classify_execution_outcome(
     if markout.execution_toxicity_index >= 0.72 {
         return ExecutionOutcomeReal::IncludedToxicFill;
     }
-    if markout.adverse_selection_score >= 0.62 || survival.edge_survival_probability < 0.30 {
+    if markout.adverse_selection_score >= 0.62 || survival.survival_probability < 0.30 {
         return ExecutionOutcomeReal::IncludedAdverseSelection;
     }
     if input.net_execution_value < 0.0 || markout.edge_real_value < 0.0 {
