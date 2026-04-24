@@ -1,10 +1,5 @@
+use crate::mev::market_truth::market_snapshot_engine::MarketSnapshot;
 use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub struct MarketSnapshot {
-    pub timestamp_ms: u64,
-    pub price: f64,
-}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct MarkoutResult {
@@ -40,18 +35,18 @@ pub struct MarkoutEngine;
 impl MarkoutEngine {
     pub fn compute(
         entry_timestamp_ms: u64,
-        entry_price: f64,
+        expected_price: f64,
         execution_price: f64,
         snapshots: &[MarketSnapshot],
     ) -> MarkoutResult {
-        if !entry_price.is_finite() || entry_price <= 0.0 || snapshots.is_empty() {
+        if !execution_price.is_finite() || execution_price <= 0.0 || snapshots.is_empty() {
             return MarkoutMetrics::default();
         }
-        let markout_100ms = markout(entry_timestamp_ms, entry_price, snapshots, 100);
-        let markout_500ms = markout(entry_timestamp_ms, entry_price, snapshots, 500);
-        let markout_1s = markout(entry_timestamp_ms, entry_price, snapshots, 1_000);
-        let markout_5s = markout(entry_timestamp_ms, entry_price, snapshots, 5_000);
-        let fill_quality_score = fill_quality(entry_price, execution_price);
+        let markout_100ms = markout(entry_timestamp_ms, execution_price, snapshots, 100);
+        let markout_500ms = markout(entry_timestamp_ms, execution_price, snapshots, 500);
+        let markout_1s = markout(entry_timestamp_ms, execution_price, snapshots, 1_000);
+        let markout_5s = markout(entry_timestamp_ms, execution_price, snapshots, 5_000);
+        let fill_quality_score = fill_quality(expected_price, execution_price);
         let adverse_selection_score =
             adverse_selection([markout_100ms, markout_500ms, markout_1s, markout_5s]);
         let execution_toxicity_index =
@@ -72,7 +67,7 @@ impl MarkoutEngine {
 
 fn markout(
     entry_timestamp_ms: u64,
-    entry_price: f64,
+    execution_price: f64,
     snapshots: &[MarketSnapshot],
     delta_ms: u64,
 ) -> f64 {
@@ -81,7 +76,7 @@ fn markout(
         .iter()
         .filter(|snapshot| snapshot.timestamp_ms >= target)
         .min_by_key(|snapshot| snapshot.timestamp_ms)
-        .map(|snapshot| snapshot.price - entry_price)
+        .map(|snapshot| snapshot.price - execution_price)
         .unwrap_or(0.0)
 }
 
