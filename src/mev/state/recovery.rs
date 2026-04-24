@@ -190,7 +190,8 @@ pub fn replay_events(
             }
             StateEvent::RiskDecision(_)
             | StateEvent::InclusionTruthUpdate(_)
-            | StateEvent::MarketTruthUpdate(_) => {}
+            | StateEvent::MarketTruthUpdate(_)
+            | StateEvent::SurvivalFeedbackUpdate(_) => {}
         }
     }
 }
