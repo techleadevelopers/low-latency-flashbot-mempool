@@ -21,6 +21,15 @@ pub struct ExecutionPayload {
     pub gas_limit: u64,
     pub price_impact_bps: u64,
     pub revert_risk: bool,
+    pub pool_address: Address,
+    pub token0: Address,
+    pub token1: Address,
+    pub trade_input_token: Address,
+    pub trade_output_token: Address,
+    pub profit_token: Address,
+    pub profit_recipient: Address,
+    pub expected_amount_out: U256,
+    pub expected_execution_price: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -138,6 +147,23 @@ impl PayloadBuilder {
             gas_limit: gas_estimate,
             price_impact_bps,
             revert_risk: false,
+            pool_address: input.pair,
+            token0: pool_after.token0,
+            token1: pool_after.token1,
+            trade_input_token: input.token_out,
+            trade_output_token: input.token_in,
+            profit_token: input.token_in,
+            profit_recipient: input.recipient,
+            expected_amount_out: amount_out,
+            expected_execution_price: {
+                let amount_in_f = amount_in.to_string().parse::<f64>().unwrap_or(0.0);
+                let amount_out_f = amount_out.to_string().parse::<f64>().unwrap_or(0.0);
+                if amount_in_f > 0.0 {
+                    amount_out_f / amount_in_f
+                } else {
+                    0.0
+                }
+            },
         })
     }
 }
