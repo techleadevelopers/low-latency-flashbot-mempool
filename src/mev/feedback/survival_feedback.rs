@@ -1,4 +1,4 @@
-use crate::mev::market_truth::execution_outcome_real::ExecutionOutcomeReal;
+use crate::mev::market_truth::execution_outcome_real::{ExecutionOutcomeReal, OutcomeConfidence};
 use crate::mev::market_truth::truth_pipeline::MarketTruthReport;
 use crate::mev::survival::survival_gate::{SurvivalAdaptiveParams, SurvivalGateConfig};
 use ethers::types::H256;
@@ -197,15 +197,14 @@ fn classify_sample(report: &MarketTruthReport) -> SurvivalSampleClass {
 }
 
 fn has_confident_market_truth(report: &MarketTruthReport) -> bool {
-    let markout_present = report.markout.markout_100ms != 0.0
-        || report.markout.markout_500ms != 0.0
-        || report.markout.markout_1s != 0.0
-        || report.markout.markout_5s != 0.0;
-    let economics_present = report.realized_pnl.is_finite()
+    !matches!(report.outcome_confidence, OutcomeConfidence::Low)
+        && report.data_quality.has_snapshots
+        && report.data_quality.has_real_execution_price
+        && report.data_quality.has_balance_delta
+        && report.realized_pnl.is_finite()
         && report.slippage_bps.is_finite()
         && report.fill_ratio.is_finite()
-        && report.fill_ratio > 0.0;
-    markout_present && economics_present
+        && report.fill_ratio > 0.0
 }
 
 fn recompute_params(
