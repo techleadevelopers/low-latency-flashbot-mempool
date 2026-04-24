@@ -24,6 +24,16 @@ pub struct PendingBundleRecord {
     pub tip_wei: U256,
     pub expected_profit_usd: f64,
     pub competition_score: f64,
+    pub pool_address: Address,
+    pub token0: Address,
+    pub token1: Address,
+    pub trade_input_token: Address,
+    pub trade_output_token: Address,
+    pub profit_token: Address,
+    pub profit_recipient: Address,
+    pub amount_in: U256,
+    pub expected_amount_out: U256,
+    pub expected_execution_price: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -39,6 +49,16 @@ pub struct InclusionTruth {
     pub effective_gas_price: U256,
     pub expected_profit_usd: f64,
     pub competition_score: f64,
+    pub pool_address: Address,
+    pub token0: Address,
+    pub token1: Address,
+    pub trade_input_token: Address,
+    pub trade_output_token: Address,
+    pub profit_token: Address,
+    pub profit_recipient: Address,
+    pub amount_in: U256,
+    pub expected_amount_out: U256,
+    pub expected_execution_price: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -113,6 +133,16 @@ impl InclusionTruthEngine {
             effective_gas_price: effective_gas_price.unwrap_or_default(),
             expected_profit_usd: record.expected_profit_usd,
             competition_score: record.competition_score,
+            pool_address: record.pool_address,
+            token0: record.token0,
+            token1: record.token1,
+            trade_input_token: record.trade_input_token,
+            trade_output_token: record.trade_output_token,
+            profit_token: record.profit_token,
+            profit_recipient: record.profit_recipient,
+            amount_in: record.amount_in,
+            expected_amount_out: record.expected_amount_out,
+            expected_execution_price: record.expected_execution_price,
         };
         self.push_truth(truth.clone());
         Some(truth)
@@ -141,6 +171,16 @@ impl InclusionTruthEngine {
                     effective_gas_price: U256::zero(),
                     expected_profit_usd: record.expected_profit_usd,
                     competition_score: record.competition_score,
+                    pool_address: record.pool_address,
+                    token0: record.token0,
+                    token1: record.token1,
+                    trade_input_token: record.trade_input_token,
+                    trade_output_token: record.trade_output_token,
+                    profit_token: record.profit_token,
+                    profit_recipient: record.profit_recipient,
+                    amount_in: record.amount_in,
+                    expected_amount_out: record.expected_amount_out,
+                    expected_execution_price: record.expected_execution_price,
                 };
                 self.push_truth(truth.clone());
                 truths.push(truth);
