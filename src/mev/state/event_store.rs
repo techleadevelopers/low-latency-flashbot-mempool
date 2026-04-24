@@ -112,6 +112,26 @@ pub struct InclusionTruthUpdate {
 pub struct MarketTruthUpdate {
     pub tx_hash: H256,
     pub outcome: String,
+    pub outcome_confidence: String,
+    pub has_snapshots: bool,
+    pub has_real_execution_price: bool,
+    pub has_real_slippage: bool,
+    pub has_balance_delta: bool,
+    pub pool_address: Address,
+    pub profit_token: Address,
+    pub profit_recipient: Address,
+    pub expected_price: f64,
+    pub execution_price: f64,
+    pub realized_pnl: f64,
+    pub balance_delta_wei: U256,
+    pub gas_paid_wei: U256,
+    pub slippage_bps: f64,
+    pub fill_ratio: f64,
+    pub latency_ms: u64,
+    pub markout_100ms: f64,
+    pub markout_500ms: f64,
+    pub markout_1s: f64,
+    pub markout_5s: f64,
     pub edge_real_value: f64,
     pub adverse_selection_score: f64,
     pub fill_quality_score: f64,
@@ -126,6 +146,17 @@ pub struct MarketTruthUpdate {
     pub lost_alpha: f64,
     pub inefficiency_score: f64,
     pub missed_opportunity: f64,
+    pub snapshots: Vec<ObservedSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ObservedSnapshot {
+    pub timestamp_ms: u64,
+    pub block_number: u64,
+    pub pool_address: Address,
+    pub price: f64,
+    pub reserve_in: U256,
+    pub reserve_out: U256,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
