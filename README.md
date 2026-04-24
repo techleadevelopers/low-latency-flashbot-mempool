@@ -28,84 +28,167 @@ Condicoes adicionais:
 - o destino da tesouraria precisa bater com o `forwarder`
 - a politica do ativo precisa permitir
 
-## Modo Spender
+## Toolkit de custodia em `src/bin/`
 
-O contrato tambem suporta fluxo de spender para ERC-20:
+Os binarios de `src/bin/` agora formam um toolkit de custodia deterministico. Eles nao sao estrategias MEV e nao executam loops autonomos.
 
-- a wallet alvo aprova o contrato
-- a wallet operacional faz sponsor funding do gas
-- a wallet operacional chama `sweepAllFrom(wallet_alvo, tokens)`
-- o contrato puxa os tokens com `transferFrom`
+Binarios atuais:
 
-Relacao correta entre chaves e contrato:
+- `sweeper`: executor one-shot para varrer saldo nativo ou ERC-20 para um endereco de controle validado
+- `preapprove`: provisionamento one-shot de approvals ERC-20 para spender explicitamente allowlisted
+- `predelegate`: provisionamento one-shot de delegacao EIP-7702 para contrato explicitamente allowlisted
 
-- `SENDER_PRIVATE_KEY`: EOA que deve ser `owner()` do contrato e que assina a tx final de `sweepAllFrom(...)`
-- `CONTROL_ADDRESS`: destino final dos fundos
-- `USE_EXTERNAL_GAS_SPONSOR=true`: habilita sponsor funding no bundle
+Regras operacionais do toolkit:
 
-Ordem do bundle nesse modo:
+- `--mode dry-run` e o padrao em todos os binarios
+- `--mode execute` e obrigatorio para enviar transacao real
+- nao ha loop infinito
+- nao ha scanner em background
+- nao ha mempool listener dentro desses binarios
+- nao ha retries implicitos
+- cada execucao exige lista explicita de wallets via `--wallet-key` e/ou `--wallets-file`
 
-1. sponsor funding
-2. approve da wallet alvo
-3. `sweepAllFrom(wallet_alvo, tokens)`
+Guardrails compartilhados:
 
-Limitacao:
+- validacao de endereco checksummed no startup
+- allowlist obrigatoria para `control_address`, `spender_address`, `delegate_contract` e tokens quando aplicavel
+- `MAX_VALUE_PER_TX`
+- gas sanity check
+- `max_executions_per_run`
+- `cooldown_per_wallet_seconds` opcional com arquivo de estado local
+- logs estruturados em JSON com `wallet`, `token`, `value_detected_wei`, `estimated_gas`, `gas_cost_wei`, `net_profit_wei`, `roi_bps`, `action`, `reason` e `tx_hash` quando houver
 
-- esse fluxo cobre ERC-20 aprovavel
-- nativo da wallet alvo nao entra por `transferFrom`
-- para nativo, precisa de outro caminho como delegate/7702
+### `sweeper`
 
-## Pre-delegacao 7702
+O `sweeper` e um executor one-shot. Ele nao monitora nada por conta propria.
 
-Para wallets do proprio ecossistema, da para provisionar a delegacao antes e deixar o monitor principal so com o papel de detectar saldo e disparar o sweep.
+Politica de execucao:
 
-Existe um binario dedicado:
-
-```bash
-cargo run --bin predelegate_7702 -- \
-  --wallets keys.txt \
-  --rpc-url https://arbitrum-mainnet.infura.io/v3/SEU_RPC \
-  --chain-id 42161 \
-  --delegate-contract 0xSEU_CONTRATO_DEPLOYADO \
-  --sponsor-private-key 0xSUA_SENDER_PRIVATE_KEY
+```text
+net_profit = value - gas_cost
+executa somente se:
+  net_profit > MIN_NET_PROFIT
+  roi_bps > MIN_ROI_BPS
+  gas estimate for valido
+  destination bater com control_address allowlisted
+  value <= MAX_VALUE_PER_TX
+  --mode execute estiver presente
 ```
 
-Esse fluxo:
-
-1. le as wallets-alvo do arquivo
-2. usa cada chave da wallet-alvo para assinar a autorizacao 7702
-3. usa a sponsor key para enviar a tx `0x04` de instalacao
-4. imprime o tx hash e valida se a wallet deixou de ter code vazio
-
-Isso nao altera o monitor principal nem o fluxo on-demand; serve como provisionamento previo.
-
-## Pre-approve spender
-
-Para o fallback `spender`, da para provisionar approvals antes do monitor principal.
-
-Binario dedicado:
+Exemplo de dry-run para saldo nativo:
 
 ```bash
-cargo run --bin preapprove_spender -- \
-  --wallets keys.txt \
-  --rpc-url https://arbitrum-mainnet.infura.io/v3/SEU_RPC \
+cargo run --bin sweeper -- \
+  --rpc-url https://arb1.arbitrum.io/rpc \
   --chain-id 42161 \
-  --spender-contract 0xSEU_CONTRATO_DEPLOYADO \
-  --token USDC:0xaf88d065e77c8cC2239327C5EDb3A432268e5831:max \
-  --token USDT:0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9:max \
-  --token WETH:0x82af49447d8a07e3bd95bd0d56f35241523fbab1:max
+  --wallets-file keys.txt \
+  --control-address 0x1234...ABCD \
+  --control-allowlist control_allowlist.txt \
+  --token native
 ```
 
-Formato de cada token:
+Exemplo de execucao para ERC-20:
 
-- `SYMBOL:ADDRESS:AMOUNT`
-- `AMOUNT` pode ser valor bruto decimal ou `max`
+```bash
+cargo run --bin sweeper -- \
+  --mode execute \
+  --rpc-url https://arb1.arbitrum.io/rpc \
+  --chain-id 42161 \
+  --wallets-file keys.txt \
+  --control-address 0x1234...ABCD \
+  --control-allowlist control_allowlist.txt \
+  --token 0xA0b86991c6218b36c1d19d4a2e9eb0ce3606eb48 \
+  --token-allowlist token_allowlist.txt \
+  --quoted-value-wei 25000000000000000 \
+  --max-value-per-tx-wei 50000000000000000 \
+  --min-net-profit-wei 2000000000000000 \
+  --min-roi-bps 800
+```
+
+Observacoes:
+
+- para `native`, o valor detectado vem do saldo nativo disponivel menos gas
+- para `ERC-20`, o binario exige `--quoted-value-wei` para aplicar guardrails economicos sem depender do core MEV
+- se o valor economico nao justificar a execucao, a acao e `SKIP`
+
+### `preapprove`
+
+O `preapprove` provisiona approvals ERC-20 de forma one-shot e segura por padrao.
+
+Regras:
+
+- spender precisa ser checksummed e allowlisted
+- token precisa ser checksummed e allowlisted
+- approval ilimitado so e aceito com `--allow-unlimited-approval`
+- sem `--mode execute`, apenas registra `SKIP` de dry-run
+- nao faz sponsor funding implicito
+
+Formato de token:
+
+- `SYMBOL:CHECKSUMMED_TOKEN_ADDRESS:AMOUNT_WEI`
+- `SYMBOL:CHECKSUMMED_TOKEN_ADDRESS:max`
+
+Exemplo:
+
+```bash
+cargo run --bin preapprove -- \
+  --mode execute \
+  --rpc-url https://arb1.arbitrum.io/rpc \
+  --chain-id 42161 \
+  --wallets-file keys.txt \
+  --spender-address 0x1234...ABCD \
+  --spender-allowlist spender_allowlist.txt \
+  --token-allowlist token_allowlist.txt \
+  --token USDC:0xaf88d065e77c8cC2239327C5EDb3A432268e5831:1000000
+```
+
+Para approval ilimitado:
+
+```bash
+cargo run --bin preapprove -- \
+  --mode execute \
+  --rpc-url https://arb1.arbitrum.io/rpc \
+  --chain-id 42161 \
+  --wallets-file keys.txt \
+  --spender-address 0x1234...ABCD \
+  --spender-allowlist spender_allowlist.txt \
+  --token-allowlist token_allowlist.txt \
+  --allow-unlimited-approval \
+  --token USDC:0xaf88d065e77c8cC2239327C5EDb3A432268e5831:max
+```
+
+### `predelegate`
+
+O `predelegate` instala delegacao EIP-7702 em modo one-shot.
+
+Regras:
+
+- contrato delegado precisa ter bytecode
+- contrato delegado precisa ser checksummed e allowlisted
+- `--expected-code-hash` pode ser usado para travar a versao esperada do contrato
+- sponsor paga o gas, mas o binario nao faz funding implicito das wallets alvo
+- apos execucao, o binario verifica se a delegacao instalada bate com o contrato esperado
+
+Exemplo:
+
+```bash
+cargo run --bin predelegate -- \
+  --mode execute \
+  --rpc-url https://arb1.arbitrum.io/rpc \
+  --chain-id 42161 \
+  --wallets-file keys.txt \
+  --delegate-contract 0x1234...ABCD \
+  --delegate-allowlist delegate_allowlist.txt \
+  --sponsor-private-key 0xSUA_CHAVE \
+  --expected-code-hash 0xHASH_DO_BYTECODE
+```
 
 Uso recomendado:
 
-- `7702` como principal
-- `spender` so para whitelist explicita de tokens
-- evitar approvals abertos para qualquer ativo
+- `predelegate` como caminho principal para wallets sob controle da propria operacao
+- `preapprove` apenas para tokens explicitamente allowlisted
+- `sweeper` como executor manual ou disparado por scheduler externo
+- nunca tratar esses binarios como bots autonomos
 
 ## Politica por ativo
 
