@@ -11,7 +11,14 @@ pub struct SurvivalAdaptiveParams {
     pub min_pool_freshness: f64,
 }
 
-pub type SurvivalGateConfig = SurvivalAdaptiveParams;
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct SurvivalGateConfig {
+    pub survival_probability_threshold: f64,
+    pub max_competitor_capture: f64,
+    pub max_latency_risk: f64,
+    pub max_staleness: f64,
+    pub min_pool_freshness: f64,
+}
 
 impl Default for SurvivalGateConfig {
     fn default() -> Self {
@@ -48,13 +55,37 @@ impl SurvivalGateConfig {
 
     #[inline]
     pub fn current() -> Self {
-        adaptive_store().load()
+        adaptive_store().load().into()
     }
 
     pub fn update_adaptive(params: SurvivalAdaptiveParams) -> SurvivalAdaptiveParams {
         let normalized = normalize(params);
         adaptive_store().store(normalized);
         normalized
+    }
+}
+
+impl From<SurvivalGateConfig> for SurvivalAdaptiveParams {
+    fn from(value: SurvivalGateConfig) -> Self {
+        Self {
+            survival_probability_threshold: value.survival_probability_threshold,
+            max_competitor_capture: value.max_competitor_capture,
+            max_latency_risk: value.max_latency_risk,
+            max_staleness: value.max_staleness,
+            min_pool_freshness: value.min_pool_freshness,
+        }
+    }
+}
+
+impl From<SurvivalAdaptiveParams> for SurvivalGateConfig {
+    fn from(value: SurvivalAdaptiveParams) -> Self {
+        Self {
+            survival_probability_threshold: value.survival_probability_threshold,
+            max_competitor_capture: value.max_competitor_capture,
+            max_latency_risk: value.max_latency_risk,
+            max_staleness: value.max_staleness,
+            min_pool_freshness: value.min_pool_freshness,
+        }
     }
 }
 
@@ -182,7 +213,7 @@ impl AdaptiveStore {
 
 fn adaptive_store() -> &'static AdaptiveStore {
     static STORE: OnceLock<AdaptiveStore> = OnceLock::new();
-    STORE.get_or_init(|| AdaptiveStore::new(SurvivalGateConfig::from_env()))
+    STORE.get_or_init(|| AdaptiveStore::new(SurvivalGateConfig::from_env().into()))
 }
 
 fn normalize(params: SurvivalAdaptiveParams) -> SurvivalAdaptiveParams {
