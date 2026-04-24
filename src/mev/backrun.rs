@@ -5,6 +5,7 @@ use crate::mev::block_loop::LearningRuntime;
 use crate::mev::capital::CapitalManager;
 use crate::mev::execution::payload_builder::{BackrunBuildInput, PayloadBuilder};
 use crate::mev::execution::ExecutionEngine;
+use crate::mev::market_truth::market_snapshot_engine::{MarketSnapshotCollector, PoolMetadata};
 use crate::mev::meta_decision::{
     MetaDecision, MetaDecisionConfig, MetaDecisionEngine, MetaOpportunity,
 };
@@ -240,6 +241,22 @@ pub async fn run(
         )
         .await
         {
+            let metadata = PoolMetadata {
+                pool_address: payload.pool_address,
+                token0: payload.token0,
+                token1: payload.token1,
+                trade_input_token: payload.trade_input_token,
+                trade_output_token: payload.trade_output_token,
+            };
+            pending_learning.register_market_pool(metadata);
+            if let Ok(Some(snapshot)) =
+                MarketSnapshotCollector::sample_pool_state(provider.clone(), metadata, unix_ms())
+                    .await
+            {
+                if let Ok(mut collector) = pending_learning.market_snapshots().lock() {
+                    collector.ingest_snapshots(vec![snapshot]);
+                }
+            }
             opportunity.score.expected_profit_wei = payload.expected_profit_wei;
             opportunity.score.slippage_adjusted_profit_wei = payload.simulated_profit_wei;
             opportunity.execution_payload = Some(payload);
@@ -562,6 +579,13 @@ fn token_as_address_vec(token: &Token) -> Option<Vec<Address>> {
         Token::Array(values) => values.iter().map(token_as_address).collect(),
         _ => None,
     }
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
