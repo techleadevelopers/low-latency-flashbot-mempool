@@ -17,6 +17,13 @@ pub enum ExecutionOutcomeReal {
     Reverted,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OutcomeConfidence {
+    Low,
+    Medium,
+    High,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ExecutionRealityInput {
     pub inclusion_outcome: BundleOutcome,
