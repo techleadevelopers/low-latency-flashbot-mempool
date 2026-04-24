@@ -628,6 +628,16 @@ impl ExecutionEngine {
                     gas_price_wei: signed_gas_price,
                     expected_profit_usd: payload.expected_profit * self.config.mev.eth_usd_price,
                     competition_score: opportunity.score.competition_score as f64 / 100.0,
+                    pool_address: payload.pool_address,
+                    token0: payload.token0,
+                    token1: payload.token1,
+                    trade_input_token: payload.trade_input_token,
+                    trade_output_token: payload.trade_output_token,
+                    profit_token: payload.profit_token,
+                    profit_recipient: payload.profit_recipient,
+                    amount_in: payload.amount_in,
+                    expected_amount_out: payload.expected_amount_out,
+                    expected_execution_price: payload.expected_execution_price,
                 };
                 if let Some(learning) = &self.learning {
                     learning.register_execution(event);
@@ -671,6 +681,16 @@ impl ExecutionEngine {
                             tip_wei: event.tip_wei,
                             expected_profit_usd: event.expected_profit_usd,
                             competition_score: event.competition_score,
+                            pool_address: event.pool_address,
+                            token0: event.token0,
+                            token1: event.token1,
+                            trade_input_token: event.trade_input_token,
+                            trade_output_token: event.trade_output_token,
+                            profit_token: event.profit_token,
+                            profit_recipient: event.profit_recipient,
+                            amount_in: event.amount_in,
+                            expected_amount_out: event.expected_amount_out,
+                            expected_execution_price: event.expected_execution_price,
                         });
                 }
                 self.dashboard.record_latency(
