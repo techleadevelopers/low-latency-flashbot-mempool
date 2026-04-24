@@ -1,4 +1,4 @@
-use crate::config::Config;
+use crate::config::{AssetClass, Config, MonitoredTokenConfig};
 use crate::dashboard::DashboardHandle;
 use crate::mev::competition::{
     extract_block_signals, CompetitionForecast, CompetitionIntelligence, PoolActivity, PressureMap,
@@ -14,17 +14,29 @@ use crate::mev::inclusion_truth::{
 };
 use crate::mev::market_truth::competition_reality::{CompetitionRealityInput, RouteCluster};
 use crate::mev::market_truth::edge_survival::EdgeSurvivalInput;
-use crate::mev::market_truth::truth_pipeline::{MarketTruthInput, TruthPipeline};
+use crate::mev::market_truth::market_snapshot_engine::{
+    extract_execution_price, ratio_to_f64, MarketSnapshotCollector, PoolMetadata,
+};
+use crate::mev::market_truth::truth_pipeline::{DataQuality, MarketTruthInput, TruthPipeline};
 use crate::mev::post_block::PostBlockAnalyzer;
 use crate::mev::state::event_store::StateEvent;
 use crate::mev::survival::survival_gate::SurvivalGateConfig;
 use crate::mev::tip_discovery::{OpportunityClass, TipDiscoveryEngine, TipOutcome};
 use crate::rpc::RpcFleet;
+use ethers::contract::abigen;
 use ethers::providers::Middleware;
-use ethers::types::{Address, Transaction, H256, U256};
+use ethers::types::{Address, BlockId, BlockNumber, Transaction, TransactionReceipt, H256, U256};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::MissedTickBehavior;
+
+abigen!(
+    Erc20BalanceView,
+    r#"[
+        function balanceOf(address account) external view returns (uint256)
+    ]"#,
+);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FinalizedInclusion {
@@ -48,6 +60,8 @@ pub struct LearningRuntime {
     lifecycle: Arc<Mutex<TxLifecycleManager>>,
     survival: Arc<Mutex<SurvivalState>>,
     survival_feedback: Arc<Mutex<SurvivalFeedbackEngine>>,
+    market_snapshots: Arc<Mutex<MarketSnapshotCollector>>,
+    token_meta: Arc<HashMap<Address, MonitoredTokenConfig>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -75,8 +89,17 @@ impl LearningRuntime {
                 last_block: 0,
             })),
             survival_feedback: Arc::new(Mutex::new(SurvivalFeedbackEngine::new(
-                SurvivalGateConfig::from_env(),
+                SurvivalGateConfig::from_env().into(),
             ))),
+            market_snapshots: Arc::new(Mutex::new(MarketSnapshotCollector::new(256))),
+            token_meta: Arc::new(
+                config
+                    .monitored_tokens
+                    .iter()
+                    .cloned()
+                    .map(|token| (token.address, token))
+                    .collect(),
+            ),
         }
     }
 
@@ -113,6 +136,25 @@ impl LearningRuntime {
                 tip_wei: event.tip_wei,
                 expected_profit_usd: event.expected_profit_usd,
                 competition_score: event.competition_score,
+                pool_address: event.pool_address,
+                token0: event.token0,
+                token1: event.token1,
+                trade_input_token: event.trade_input_token,
+                trade_output_token: event.trade_output_token,
+                profit_token: event.profit_token,
+                profit_recipient: event.profit_recipient,
+                amount_in: event.amount_in,
+                expected_amount_out: event.expected_amount_out,
+                expected_execution_price: event.expected_execution_price,
+            });
+        }
+        if let Ok(mut snapshots) = self.market_snapshots.lock() {
+            snapshots.register_pool(PoolMetadata {
+                pool_address: event.pool_address,
+                token0: event.token0,
+                token1: event.token1,
+                trade_input_token: event.trade_input_token,
+                trade_output_token: event.trade_output_token,
             });
         }
     }
@@ -142,6 +184,16 @@ impl LearningRuntime {
 
     pub fn lifecycle(&self) -> Arc<Mutex<TxLifecycleManager>> {
         self.lifecycle.clone()
+    }
+
+    pub fn market_snapshots(&self) -> Arc<Mutex<MarketSnapshotCollector>> {
+        self.market_snapshots.clone()
+    }
+
+    pub fn register_market_pool(&self, metadata: PoolMetadata) {
+        if let Ok(mut snapshots) = self.market_snapshots.lock() {
+            snapshots.register_pool(metadata);
+        }
     }
 
     pub fn observe_pending_transaction(&self, tx: &Transaction) {
@@ -200,6 +252,16 @@ pub struct ExecutionEvent {
     pub gas_price_wei: U256,
     pub expected_profit_usd: f64,
     pub competition_score: f64,
+    pub pool_address: Address,
+    pub token0: Address,
+    pub token1: Address,
+    pub trade_input_token: Address,
+    pub trade_output_token: Address,
+    pub profit_token: Address,
+    pub profit_recipient: Address,
+    pub amount_in: U256,
+    pub expected_amount_out: U256,
+    pub expected_execution_price: f64,
 }
 
 pub async fn run_block_loop(
@@ -242,12 +304,29 @@ async fn process_block(
     dashboard: &DashboardHandle,
 ) {
     let competing = collect_competing_signals(runtime, provider.clone(), block_number).await;
+    let tracked_pools = runtime
+        .market_snapshots
+        .lock()
+        .map(|snapshots| snapshots.pools())
+        .unwrap_or_default();
+    if let Ok(block_snapshots) = MarketSnapshotCollector::collect_block_snapshots(
+        provider.clone(),
+        &tracked_pools,
+        block_number,
+    )
+    .await
+    {
+        if let Ok(mut snapshots) = runtime.market_snapshots.lock() {
+            snapshots.ingest_snapshots(block_snapshots);
+        }
+    }
     let pending_hashes = runtime
         .truth
         .lock()
         .map(|truth| truth.pending_hashes())
         .unwrap_or_default();
     let mut receipt_results = Vec::with_capacity(pending_hashes.len());
+    let mut receipt_by_hash = HashMap::with_capacity(pending_hashes.len());
     for hash in pending_hashes {
         let receipt = provider.get_transaction_receipt(hash).await.ok().flatten();
         let included_block = receipt.as_ref().and_then(|receipt| receipt.block_number);
@@ -260,6 +339,9 @@ async fn process_block(
             .as_ref()
             .and_then(|receipt| receipt.effective_gas_price);
         receipt_results.push((hash, included_block, success, gas_used, effective_gas_price));
+        if let Some(receipt) = receipt {
+            receipt_by_hash.insert(hash, receipt);
+        }
     }
     let truths = {
         let mut truth = match runtime.truth.lock() {
@@ -292,7 +374,13 @@ async fn process_block(
         update_feedback(runtime, &truth);
         update_inclusion(runtime, &truth, finalized);
         finalize_execution(runtime, &truth);
-        update_market_truth(runtime, &truth);
+        let receipt = receipt_by_hash.remove(&truth.tx_hash);
+        tokio::spawn(update_market_truth(
+            runtime.clone(),
+            truth.clone(),
+            receipt,
+            provider.clone(),
+        ));
         update_survival(runtime, finalized, block_number);
         dashboard.event(
             "info",
@@ -314,9 +402,11 @@ async fn process_block(
     }
 }
 
-fn update_market_truth(
-    runtime: &LearningRuntime,
-    truth: &crate::mev::inclusion_truth::InclusionTruth,
+async fn update_market_truth(
+    runtime: LearningRuntime,
+    truth: crate::mev::inclusion_truth::InclusionTruth,
+    receipt: Option<TransactionReceipt>,
+    provider: Arc<ethers::providers::Provider<ethers::providers::Http>>,
 ) {
     let event_store = runtime
         .lifecycle
@@ -326,42 +416,94 @@ fn update_market_truth(
     let Some(event_store) = event_store else {
         return;
     };
+
+    let execution_ts_ms =
+        observed_execution_timestamp_ms(provider.clone(), &truth, receipt.as_ref()).await;
+    collect_observed_markout_samples(
+        runtime.market_snapshots(),
+        provider.clone(),
+        PoolMetadata {
+            pool_address: truth.pool_address,
+            token0: truth.token0,
+            token1: truth.token1,
+            trade_input_token: truth.trade_input_token,
+            trade_output_token: truth.trade_output_token,
+        },
+        execution_ts_ms,
+    )
+    .await;
+
     let competitor_pressure = truth.competition_score.clamp(0.0, 1.0);
-    let realized_pnl = if matches!(
-        truth.outcome,
-        crate::mev::inclusion_truth::BundleOutcome::Included
-            | crate::mev::inclusion_truth::BundleOutcome::LateInclusion
-    ) {
-        truth.expected_profit_usd
-    } else {
-        0.0
+    let market_snapshots = runtime
+        .market_snapshots
+        .lock()
+        .ok()
+        .map(|collector| collector.collect_markout_snapshots(truth.pool_address, execution_ts_ms))
+        .unwrap_or_default();
+    let execution_observation = receipt.as_ref().and_then(|receipt| {
+        extract_execution_price(
+            receipt,
+            truth.pool_address,
+            truth.token0,
+            truth.token1,
+            truth.trade_input_token,
+            truth.trade_output_token,
+        )
+    });
+    let expected_price = truth.expected_execution_price;
+    let execution_price = execution_observation
+        .map(|observation| observation.execution_price)
+        .unwrap_or_default();
+    let slippage_bps =
+        if expected_price.is_finite() && expected_price > 0.0 && execution_price > 0.0 {
+            ((execution_price - expected_price) / expected_price) * 10_000.0
+        } else {
+            f64::NAN
+        };
+    let fill_ratio = execution_observation
+        .and_then(|observation| ratio_to_f64(observation.amount_out, truth.expected_amount_out))
+        .unwrap_or(0.0);
+    let (has_balance_delta, balance_delta_wei, gas_paid_wei, realized_pnl) =
+        observed_balance_delta(&runtime, &truth, provider.clone()).await;
+    let data_quality = DataQuality {
+        has_snapshots: market_snapshots.len() == 4,
+        has_real_execution_price: execution_observation.is_some(),
+        has_real_slippage: slippage_bps.is_finite(),
+        has_balance_delta,
     };
     let input = MarketTruthInput {
         truth: truth.clone(),
-        entry_timestamp_ms: unix_ms().saturating_sub(truth.latency_ms as u64),
-        entry_price: 0.0,
-        execution_price: 0.0,
+        entry_timestamp_ms: execution_ts_ms,
+        expected_price,
+        execution_price,
         net_execution_value: realized_pnl,
-        slippage_bps: 0.0,
-        fill_ratio: 1.0,
-        market_snapshots: Vec::new(),
+        balance_delta_wei,
+        gas_paid_wei,
+        slippage_bps,
+        fill_ratio,
+        market_snapshots,
+        data_quality,
         competition: CompetitionRealityInput {
             route: RouteCluster {
-                pool: Address::zero(),
-                token_in: Address::zero(),
-                token_out: Address::zero(),
+                pool: truth.pool_address,
+                token_in: truth.trade_input_token,
+                token_out: truth.trade_output_token,
             },
             mempool_similar_count: 0,
             inclusion_delay_ms: truth.latency_ms,
             competitor_pressure,
             competing_included_count: 0,
-            observed_alpha_before: 0.0,
-            observed_alpha_after: 0.0,
+            observed_alpha_before: expected_price,
+            observed_alpha_after: execution_price,
         },
         survival: EdgeSurvivalInput {
             competition_pressure: competitor_pressure,
             mempool_congestion: 0.0,
-            historical_markout_degradation: 0.0,
+            historical_markout_degradation: if realized_pnl.is_finite() && realized_pnl < 0.0 {
+                1.0
+            } else {
+                0.0
+            },
             latency_ms: truth.latency_ms,
         },
         expected_execution_value: truth.expected_profit_usd,
@@ -561,6 +703,89 @@ fn update_survival(runtime: &LearningRuntime, finalized: FinalizedInclusion, blo
         survival.degradation_ewma = survival.degradation_ewma * 0.85 + bad * 0.15;
         survival.enabled = survival.degradation_ewma > 0.55;
         survival.last_block = block_number;
+    }
+}
+
+async fn observed_balance_delta(
+    runtime: &LearningRuntime,
+    truth: &crate::mev::inclusion_truth::InclusionTruth,
+    provider: Arc<ethers::providers::Provider<ethers::providers::Http>>,
+) -> (bool, U256, U256, f64) {
+    let Some(block_number) = truth.included_block else {
+        return (false, U256::zero(), U256::zero(), f64::NAN);
+    };
+    let token = Erc20BalanceView::new(truth.profit_token, provider.clone());
+    let pre_block = block_number.saturating_sub(1);
+    let pre_balance = token
+        .balance_of(truth.profit_recipient)
+        .block(BlockId::Number(BlockNumber::Number(pre_block.into())))
+        .call()
+        .await
+        .ok();
+    let post_balance = token
+        .balance_of(truth.profit_recipient)
+        .block(BlockId::Number(BlockNumber::Number(block_number.into())))
+        .call()
+        .await
+        .ok();
+    let (Some(pre_balance), Some(post_balance)) = (pre_balance, post_balance) else {
+        return (false, U256::zero(), U256::zero(), f64::NAN);
+    };
+    let balance_delta = post_balance.saturating_sub(pre_balance);
+    let gas_paid = truth.gas_used.saturating_mul(truth.effective_gas_price);
+    let realized = runtime
+        .token_meta
+        .get(&truth.profit_token)
+        .filter(|meta| {
+            meta.asset_class == AssetClass::Native
+                || meta.symbol.eq_ignore_ascii_case("WETH")
+                || meta.symbol.eq_ignore_ascii_case("ETH")
+        })
+        .map(|_| {
+            let balance_f = balance_delta.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
+            let gas_f = gas_paid.to_string().parse::<f64>().unwrap_or(0.0) / 1e18;
+            balance_f - gas_f
+        })
+        .unwrap_or(f64::NAN);
+    (true, balance_delta, gas_paid, realized)
+}
+
+async fn observed_execution_timestamp_ms(
+    provider: Arc<ethers::providers::Provider<ethers::providers::Http>>,
+    truth: &crate::mev::inclusion_truth::InclusionTruth,
+    receipt: Option<&TransactionReceipt>,
+) -> u64 {
+    if let Some(block_number) = receipt.and_then(|receipt| receipt.block_number) {
+        if let Ok(Some(block)) = provider.get_block(block_number).await {
+            return block.timestamp.as_u64().saturating_mul(1_000);
+        }
+    }
+    unix_ms().saturating_sub(truth.latency_ms as u64)
+}
+
+async fn collect_observed_markout_samples(
+    collector: Arc<Mutex<MarketSnapshotCollector>>,
+    provider: Arc<ethers::providers::Provider<ethers::providers::Http>>,
+    metadata: PoolMetadata,
+    execution_ts_ms: u64,
+) {
+    for delta_ms in [100u64, 500, 1_000, 5_000] {
+        let now_ms = unix_ms();
+        let target_ms = execution_ts_ms.saturating_add(delta_ms);
+        if target_ms > now_ms {
+            tokio::time::sleep(Duration::from_millis(target_ms - now_ms)).await;
+        }
+        if let Ok(Some(snapshot)) = MarketSnapshotCollector::sample_pool_state(
+            provider.clone(),
+            metadata,
+            target_ms.max(unix_ms()),
+        )
+        .await
+        {
+            if let Ok(mut lock) = collector.lock() {
+                lock.ingest_snapshots(vec![snapshot]);
+            }
+        }
     }
 }
 
