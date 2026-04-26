@@ -234,8 +234,11 @@ body { position: relative; min-height: 100vh; padding: 12px; }
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 10px;
-  max-height: 360px; overflow-y: auto; padding-right: 6px;
+  max-height: 270px; overflow-y: auto; padding-right: 6px;
 }
+
+.panel-rpc .panel-body { max-height: 270px; overflow-y: auto; }
+.panel-latency .panel-body { max-height: 270px; overflow-y: auto; }
 .wallet-card {
   position: relative;
   border: 1px solid var(--line);
