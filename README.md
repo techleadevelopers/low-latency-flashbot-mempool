@@ -1,10 +1,20 @@
 # Corporate Residual Sweeper
 
-Sistema de custodia reativa para wallets operacionais da propria empresa, com foco em micro-residuo economicamente positivo.
+Este repositorio contem duas camadas distintas:
 
-## Modelo operacional
+- `src/mev/`: engine MEV e infraestrutura de execucao, simulacao, truth, recovery e inclusion
+- `src/bin/`: toolkit de custodia deterministico para controle operacional de wallets, approvals e delegacao
 
-O sistema nao procura apenas saldo grande. Ele monitora:
+Separacao de responsabilidade:
+
+- o core MEV e a trilha de estrategia vivem fora de `src/bin/`
+- os binarios de `src/bin/` nao sao estrategias
+- os binarios de `src/bin/` existem para custody, wallet control e provisionamento seguro
+- os binarios de `src/bin/` sao executores one-shot, nao daemons autonomos
+
+## Modelo operacional de custodia
+
+Na camada de custodia, o sistema nao procura apenas saldo grande. Ele trata:
 
 - taxa
 - troco
