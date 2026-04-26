@@ -86,6 +86,23 @@ pub struct Config {
     pub frontrun_slippage_bps: u64,
     pub frontrun_gas_bump_bps: u64,
     pub mev: MevConfig,
+    pub delegation_guard: DelegationGuardConfig,
+}
+
+#[derive(Debug, Clone)]
+pub struct DelegationGuardConfig {
+    pub enabled: bool,
+    pub poll_interval_ms: u64,
+    pub reclaim_cooldown_ms: u64,
+    pub reclaim_window_secs: u64,
+    pub max_reclaims_per_window: usize,
+    pub aggressive_priority_fee_gwei: u64,
+    pub aggressive_fee_multiplier_bps: u64,
+    pub trusted_delegates: HashSet<Address>,
+    pub allowed_calldata_selectors: HashSet<[u8; 4]>,
+    pub approval_spenders: Vec<Address>,
+    pub secure_sweep_enabled: bool,
+    pub private_relay_enabled: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -588,6 +605,48 @@ impl Config {
                 .unwrap_or_else(|_| "3500".to_string())
                 .parse::<u64>()?,
         };
+        let mut trusted_delegates =
+            parse_address_set(&env::var("DELEGATION_TRUSTED_ADDRESSES").unwrap_or_default())?;
+        trusted_delegates.insert(contract);
+        let delegation_guard = DelegationGuardConfig {
+            enabled: env::var("DELEGATION_GUARD_ENABLED")
+                .unwrap_or_else(|_| "true".to_string())
+                .trim()
+                .eq_ignore_ascii_case("true"),
+            poll_interval_ms: env::var("DELEGATION_GUARD_POLL_INTERVAL_MS")
+                .unwrap_or_else(|_| "250".to_string())
+                .parse::<u64>()?,
+            reclaim_cooldown_ms: env::var("DELEGATION_RECLAIM_COOLDOWN_MS")
+                .unwrap_or_else(|_| "15000".to_string())
+                .parse::<u64>()?,
+            reclaim_window_secs: env::var("DELEGATION_RECLAIM_WINDOW_SECS")
+                .unwrap_or_else(|_| "120".to_string())
+                .parse::<u64>()?,
+            max_reclaims_per_window: env::var("DELEGATION_MAX_RECLAIMS_PER_WINDOW")
+                .unwrap_or_else(|_| "3".to_string())
+                .parse::<usize>()?,
+            aggressive_priority_fee_gwei: env::var("DELEGATION_AGGRESSIVE_PRIORITY_FEE_GWEI")
+                .unwrap_or_else(|_| "80".to_string())
+                .parse::<u64>()?,
+            aggressive_fee_multiplier_bps: env::var("DELEGATION_AGGRESSIVE_FEE_MULTIPLIER_BPS")
+                .unwrap_or_else(|_| "20000".to_string())
+                .parse::<u64>()?,
+            trusted_delegates,
+            allowed_calldata_selectors: parse_selector_set(
+                &env::var("DELEGATION_ALLOWED_CALLDATA_SELECTORS").unwrap_or_default(),
+            )?,
+            approval_spenders: parse_address_vec(
+                &env::var("DELEGATION_APPROVAL_SPENDERS").unwrap_or_default(),
+            )?,
+            secure_sweep_enabled: env::var("DELEGATION_SECURE_SWEEP_ENABLED")
+                .unwrap_or_else(|_| "false".to_string())
+                .trim()
+                .eq_ignore_ascii_case("true"),
+            private_relay_enabled: env::var("DELEGATION_PRIVATE_RELAY_ENABLED")
+                .unwrap_or_else(|_| "true".to_string())
+                .trim()
+                .eq_ignore_ascii_case("true"),
+        };
 
         let mut infura_ids = Vec::new();
         for idx in 1..=10 {
@@ -663,6 +722,7 @@ impl Config {
             frontrun_slippage_bps,
             frontrun_gas_bump_bps,
             mev,
+            delegation_guard,
         })
     }
 
@@ -732,6 +792,13 @@ impl Config {
         println!("Mempool Monitor: {}", self.enable_mempool_monitor);
         println!("Frontrun slippage bps: {}", self.frontrun_slippage_bps);
         println!("Frontrun gas bump bps: {}", self.frontrun_gas_bump_bps);
+        println!(
+            "Delegation guard: enabled={} poll={}ms trusted={} priority={}gwei",
+            self.delegation_guard.enabled,
+            self.delegation_guard.poll_interval_ms,
+            self.delegation_guard.trusted_delegates.len(),
+            self.delegation_guard.aggressive_priority_fee_gwei
+        );
         println!(
             "MEV Engine: enabled={} strategy={} capital={} min_profit={} min_roi={} max_risk={} min_confidence={}",
             self.mev.enabled,
@@ -903,6 +970,36 @@ fn parse_address_set(value: &str) -> Result<HashSet<Address>, Box<dyn std::error
         addresses.insert(trimmed.parse::<Address>()?);
     }
     Ok(addresses)
+}
+
+fn parse_address_vec(value: &str) -> Result<Vec<Address>, Box<dyn std::error::Error>> {
+    let mut addresses = Vec::new();
+    for raw in value.split(',') {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        addresses.push(trimmed.parse::<Address>()?);
+    }
+    Ok(addresses)
+}
+
+fn parse_selector_set(
+    value: &str,
+) -> Result<HashSet<[u8; 4]>, Box<dyn std::error::Error>> {
+    let mut selectors = HashSet::new();
+    for raw in value.split(',') {
+        let trimmed = raw.trim().strip_prefix("0x").unwrap_or(raw.trim());
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.len() != 8 {
+            return Err(format!("invalid calldata selector: {raw}").into());
+        }
+        let decoded = hex::decode(trimmed)?;
+        selectors.insert([decoded[0], decoded[1], decoded[2], decoded[3]]);
+    }
+    Ok(selectors)
 }
 
 fn parse_monitored_tokens(
