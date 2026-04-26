@@ -257,7 +257,7 @@ body { position: relative; min-height: 100vh; padding: 12px; }
 .stat-strip {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: 1fr 1fr 1fr 1fr 2fr;
   gap: 12px;
 }
 
@@ -336,6 +336,83 @@ body { position: relative; min-height: 100vh; padding: 12px; }
 .neon-red .stat-value     { color: var(--red); text-shadow: 0 0 12px rgba(255,77,109,0.5); }
 .neon-amber   { box-shadow: inset 0 0 0 1px rgba(255,180,84,0.35), 0 0 20px rgba(255,180,84,0.18); }
 .neon-amber .stat-value   { color: var(--amber); text-shadow: 0 0 12px rgba(255,180,84,0.5); }
+
+/* ===== Hero stat (REALIZED PROFIT shouts) ===== */
+.stat-card-hero {
+  border: 1px solid rgba(255,180,84,0.65);
+  background:
+    radial-gradient(ellipse at top right, rgba(255,180,84,0.18), transparent 60%),
+    linear-gradient(180deg, rgba(28,18,4,0.9), rgba(8,5,2,0.85));
+  box-shadow:
+    inset 0 0 0 1px rgba(255,180,84,0.55),
+    inset 0 0 28px rgba(255,180,84,0.18),
+    0 0 24px rgba(255,180,84,0.35),
+    0 0 60px rgba(255,180,84,0.18);
+  animation: hero-pulse 2.4s ease-in-out infinite;
+  position: relative;
+}
+.stat-card-hero::before {
+  content: "";
+  position: absolute; inset: -1px;
+  border: 1px solid rgba(255,180,84,0.4);
+  border-radius: 6px;
+  pointer-events: none;
+  animation: hero-ring 2.4s ease-in-out infinite;
+}
+.stat-card-hero .stat-label {
+  color: var(--amber);
+  font-family: 'Orbitron', sans-serif;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.28em;
+  text-shadow: 0 0 6px rgba(255,180,84,0.7);
+}
+.stat-card-hero .stat-value {
+  font-size: 38px;
+  font-weight: 900;
+  line-height: 1;
+  margin-top: 8px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  color: #ffd591;
+  text-shadow:
+    0 0 8px rgba(255,180,84,0.95),
+    0 0 18px rgba(255,180,84,0.7),
+    0 0 36px rgba(255,140,40,0.55),
+    0 0 64px rgba(255,120,20,0.35);
+  animation: hero-text-pulse 2.4s ease-in-out infinite;
+}
+.stat-card-hero .stat-foot {
+  color: rgba(255,200,140,0.85);
+  margin-top: 8px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+
+@keyframes hero-pulse {
+  0%, 100% {
+    box-shadow:
+      inset 0 0 0 1px rgba(255,180,84,0.55),
+      inset 0 0 28px rgba(255,180,84,0.18),
+      0 0 24px rgba(255,180,84,0.35),
+      0 0 60px rgba(255,180,84,0.18);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 1px rgba(255,200,120,0.85),
+      inset 0 0 38px rgba(255,180,84,0.32),
+      0 0 38px rgba(255,180,84,0.6),
+      0 0 90px rgba(255,140,40,0.35);
+  }
+}
+@keyframes hero-text-pulse {
+  0%, 100% { filter: brightness(1); }
+  50%      { filter: brightness(1.15); }
+}
+@keyframes hero-ring {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%      { opacity: 0.85; transform: scale(1.012); }
+}
 
 /* ===== Wallet grid ===== */
 .wallet-grid {
