@@ -9,13 +9,20 @@ A Rust MEV / residual sweeper bot (binary `mev-sweeper`) plus a cyberpunk WebGL 
   an axum dashboard at `DASHBOARD_ADDR` (defaults to `127.0.0.1:8787`) and
   exposes `GET /api/status` with the `DashboardState` JSON shape.
 - **Frontend (`web/`)** — standalone static dashboard served on port 5000:
-  - `index.html` — HUD layout
-  - `styles.css` — cyberpunk neon theme (cyan/magenta, scanlines, glitch)
+  - `index.html` — HUD shell with left sidebar nav and 5 hash-routed views:
+    `#dashboard` (stats + Latency Radar + Ranking),
+    `#wallets` (operational wallet table with 7702/APR badges),
+    `#rpc` (per-endpoint RPC fleet cards with health bar/latency/errors/last block),
+    `#eip7702` (per-wallet delegation + pre-approval table with re-apply actions),
+    `#events` (full event console)
+  - `styles.css` — cyberpunk neon theme (cyan/magenta, scanlines, glitch),
+    sidebar + view layout, ops toolbar/table/cards, neon buttons & pills
   - `js/fx.js` — PixiJS WebGL background (hex grid, particles, scan beam, neon arcs)
-  - `js/radar.js` — Canvas2D latency radar (last + avg polygons)
+  - `js/radar.js` — Canvas2D latency radar with central numeric AVG ms readout
   - `js/data.js` — probes `/api/status`; falls back to a realistic simulation
-    that matches the `DashboardState` shape from `src/dashboard.rs`
-  - `js/app.js` — DOM render loop
+    matching `DashboardState`, plus simulated `delegated_7702`/`preapproved`
+    flags + `delegation_summary` until the backend exposes them
+  - `js/app.js` — hash router + per-view renderers and main render loop
 
 ## Workflow
 

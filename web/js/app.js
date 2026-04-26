@@ -1,4 +1,4 @@
-// app.js — main UI loop. Reads from window.__CRS_DATA__ and updates the DOM.
+// app.js — main UI loop + sidebar router. Reads from window.__CRS_DATA__ and renders views.
 
 const $ = (id) => document.getElementById(id);
 
@@ -14,7 +14,55 @@ function fmtDuration(ms) {
   const sec = String(s % 60).padStart(2, "0");
   return `${h}:${m}:${sec}`;
 }
+function shortenRpc(url) {
+  if (!url) return "--";
+  return url.replace(/^.*?:\/\//, "").split("/")[0];
+}
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+function timeAgo(ms) {
+  const d = (Date.now() - ms) / 1000;
+  if (d < 60) return Math.floor(d) + "s";
+  if (d < 3600) return Math.floor(d / 60) + "m";
+  return Math.floor(d / 3600) + "h";
+}
 
+/* ========= Router ========= */
+const VIEWS = ["dashboard", "wallets", "rpc", "eip7702", "events"];
+let currentView = "dashboard";
+
+function setView(v) {
+  if (!VIEWS.includes(v)) v = "dashboard";
+  currentView = v;
+  document.querySelectorAll(".view").forEach(el => {
+    el.classList.toggle("active", el.dataset.view === v);
+  });
+  document.querySelectorAll(".nav-item").forEach(el => {
+    el.classList.toggle("active", el.dataset.view === v);
+  });
+}
+
+function initRouter() {
+  document.querySelectorAll(".nav-item").forEach(a => {
+    a.addEventListener("click", e => {
+      e.preventDefault();
+      const v = a.dataset.view;
+      window.location.hash = v;
+      setView(v);
+    });
+  });
+  window.addEventListener("hashchange", () => {
+    const v = (window.location.hash || "#dashboard").slice(1);
+    setView(v);
+  });
+  const initial = (window.location.hash || "#dashboard").slice(1);
+  setView(initial);
+}
+
+/* ========= Header ========= */
 function renderHeader(s) {
   const mode = $("meta-mode");
   mode.textContent = (s.bot_mode || "?").toUpperCase();
@@ -37,6 +85,7 @@ function renderHeader(s) {
   }
 }
 
+/* ========= Dashboard view ========= */
 function renderStats(s) {
   $("stat-wallets").textContent = s.wallet_count ?? 0;
   $("stat-keys-read").textContent = s.total_keys_read ?? 0;
@@ -61,60 +110,9 @@ function renderStats(s) {
   $("stat-min-profit").textContent = parseFloat(s.min_net_profit_eth || "0").toFixed(6);
 }
 
-function renderWallets(s) {
-  const grid = $("wallet-grid");
-  const html = (s.hot_wallets || []).map(w => {
-    const deleg = w.delegated_7702;
-    const appr = w.preapproved;
-    const delegBadge = deleg === null || deleg === undefined
-      ? ""
-      : `<span class="wallet-badge ${deleg ? "on" : "off"}" title="EIP-7702 delegation">7702</span>`;
-    const apprBadge = appr === null || appr === undefined
-      ? ""
-      : `<span class="wallet-badge appr ${appr ? "on" : "off"}" title="Token pre-approve">APR</span>`;
-    return `
-    <div class="wallet-card">
-      <div class="wallet-addr"><span class="wallet-status"></span>${fmtAddr(w.address)}</div>
-      <div class="wallet-row">
-        <span class="wallet-balance">${parseFloat(w.balance_eth).toFixed(6)} Ξ</span>
-        <span class="wallet-rpc">${shortenRpc(w.rpc)}</span>
-      </div>
-      <div class="wallet-badges">${delegBadge}${apprBadge}</div>
-    </div>
-  `;
-  }).join("");
-  grid.innerHTML = html;
-}
-
-function shortenRpc(url) {
-  if (!url) return "--";
-  return url.replace(/^.*?:\/\//, "").split("/")[0];
-}
-
-function renderRpcs(s) {
-  const list = $("rpc-list");
-  const html = (s.rpc_endpoints || []).map(r => {
-    const health = Math.round((r.health || 0) * 100);
-    const tagClass = (r.role === "send") ? "rpc-tag send" : "rpc-tag";
-    return `
-      <div class="rpc-row">
-        <div class="rpc-name">
-          <span class="${tagClass}">${(r.role || "read").toUpperCase()}</span>
-          ${shortenRpc(r.url)}
-        </div>
-        <div class="rpc-bar-wrap"><div class="rpc-bar" style="width:${health}%"></div></div>
-        <div class="rpc-meta">
-          ${r.latency_ms || 0}ms · err ${r.errors || 0}<br>
-          blk ${(r.last_block || 0).toLocaleString()}
-        </div>
-      </div>
-    `;
-  }).join("");
-  list.innerHTML = html;
-}
-
 function renderResidual(s) {
   const tbody = $("residual-body");
+  if (!tbody) return;
   const rows = s.top_residual_wallets || [];
   const maxScore = Math.max(1, ...rows.map(r => r.residual_score || 0));
   tbody.innerHTML = rows.map((r, i) => `
@@ -135,26 +133,120 @@ function renderResidual(s) {
 }
 
 function renderLatency(s) {
-  const list = $("latency-list");
-  list.innerHTML = (s.latency_metrics || []).map(m => `
-    <div class="latency-row">
-      <span class="latency-stage">${m.stage.replace(/_/g, " ")}</span>
-      <span class="latency-num last">${m.last_ms ?? "—"}</span>
-      <span class="latency-num avg">${m.avg_ms ?? "—"}</span>
-      <span class="latency-num max">${m.max_ms ?? "—"}</span>
-    </div>
-  `).join("");
-
   if (window.__CRS_RADAR__) window.__CRS_RADAR__.setStages(s.latency_metrics || []);
 }
 
+/* ========= Wallets ops view ========= */
+function renderWalletsView(s) {
+  const wallets = s.hot_wallets || [];
+  const total = wallets.length;
+  const armed = wallets.filter(w => parseFloat(w.balance_eth) > 0).length;
+  const sum = wallets.reduce((a, w) => a + parseFloat(w.balance_eth || 0), 0);
+  $("ops-wallet-total").textContent = total;
+  $("ops-wallet-armed").textContent = armed;
+  $("ops-wallet-sum").textContent = sum.toFixed(6);
+
+  const tbody = $("ops-wallet-body");
+  if (!tbody) return;
+  const sorted = [...wallets].sort((a, b) => parseFloat(b.balance_eth) - parseFloat(a.balance_eth));
+  tbody.innerHTML = sorted.map((w, i) => {
+    const deleg = w.delegated_7702;
+    const appr = w.preapproved;
+    return `
+      <tr>
+        <td class="dim">${i + 1}</td>
+        <td class="mono">${fmtAddr(w.address)}</td>
+        <td class="num neon-c">${parseFloat(w.balance_eth).toFixed(6)}</td>
+        <td class="dim">${shortenRpc(w.rpc)}</td>
+        <td>${badge(deleg, "7702")}</td>
+        <td>${badge(appr, "APR", true)}</td>
+        <td class="dim">${w.last_seen_at ? fmtTime(w.last_seen_at) : "--"}</td>
+      </tr>
+    `;
+  }).join("");
+}
+
+/* ========= RPC ops view ========= */
+function renderRpcView(s) {
+  const rpcs = s.rpc_endpoints || [];
+  const send = rpcs.filter(r => r.role === "send").length;
+  const read = rpcs.length - send;
+  $("ops-rpc-total").textContent = rpcs.length;
+  $("ops-rpc-send").textContent = send;
+  $("ops-rpc-read").textContent = read;
+
+  const grid = $("ops-rpc-grid");
+  if (!grid) return;
+  grid.innerHTML = rpcs.map(r => {
+    const health = Math.round((r.health || 0) * 100);
+    const tag = r.role === "send" ? "send" : "read";
+    return `
+      <div class="rpc-card">
+        <div class="rpc-card-head">
+          <span class="rpc-tag ${tag}">${(r.role || "read").toUpperCase()}</span>
+          <span class="rpc-card-url mono">${shortenRpc(r.url)}</span>
+          <span class="rpc-card-status"><span class="dot ${health > 70 ? "ok" : health > 40 ? "warn" : "err"}"></span></span>
+        </div>
+        <div class="rpc-card-bar">
+          <div class="rpc-card-bar-fill" style="width:${health}%"></div>
+        </div>
+        <div class="rpc-card-grid">
+          <div><span class="kv-k">HEALTH</span><span class="kv-v">${health}%</span></div>
+          <div><span class="kv-k">LATENCY</span><span class="kv-v">${r.latency_ms || 0} ms</span></div>
+          <div><span class="kv-k">ERRORS</span><span class="kv-v">${r.errors || 0}</span></div>
+          <div><span class="kv-k">LAST BLOCK</span><span class="kv-v mono">${(r.last_block || 0).toLocaleString()}</span></div>
+        </div>
+        <div class="rpc-card-actions">
+          <button class="btn-cyber sm">PING</button>
+          <button class="btn-cyber sm alt">RESET</button>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+/* ========= EIP-7702 ops view ========= */
+function renderDelegView(s) {
+  const wallets = s.hot_wallets || [];
+  const summary = s.delegation_summary;
+  const total = summary?.total ?? wallets.length;
+  const deleg = summary?.delegated ?? wallets.filter(w => w.delegated_7702).length;
+  const appr = summary?.preapproved ?? wallets.filter(w => w.preapproved).length;
+  $("ops-deleg-count").textContent = `${deleg}/${total}`;
+  $("ops-appr-count").textContent = `${appr}/${total}`;
+  $("ops-deleg-target").textContent = s.contract || "--";
+
+  const tbody = $("ops-deleg-body");
+  if (!tbody) return;
+  tbody.innerHTML = wallets.map((w, i) => {
+    const d = w.delegated_7702;
+    const a = w.preapproved;
+    const target = s.contract || "0x…";
+    return `
+      <tr>
+        <td class="dim">${i + 1}</td>
+        <td class="mono">${fmtAddr(w.address)}</td>
+        <td>${statusPill(d, "INSTALLED", "MISSING")}</td>
+        <td class="mono dim">${fmtAddr(target)}</td>
+        <td>${statusPill(a, "OK", "PENDING", true)}</td>
+        <td class="dim">${fmtTime(new Date().toISOString())}</td>
+        <td>
+          <button class="btn-cyber sm ${d ? "alt" : ""}">${d ? "RE-APPLY" : "DELEGATE"}</button>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+/* ========= Events ========= */
 let lastEventCount = 0;
 function renderConsole(s) {
   const c = $("event-console");
+  if (!c) return;
   const events = s.recent_events || [];
-  if (events.length === lastEventCount) return;
+  if (events.length === lastEventCount && currentView !== "events") return;
   lastEventCount = events.length;
-  c.innerHTML = events.slice(0, 60).map(e => `
+  c.innerHTML = events.slice(0, 120).map(e => `
     <div class="console-line">
       <span class="console-time">${fmtTime(e.at)}</span>
       <span class="console-level ${e.level}">${e.level.toUpperCase()}</span>
@@ -163,12 +255,23 @@ function renderConsole(s) {
   `).join("");
 }
 
-function escapeHtml(s) {
-  return String(s)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+/* ========= Helpers ========= */
+function badge(val, label, green = false) {
+  if (val === null || val === undefined) return `<span class="op-badge">--</span>`;
+  if (val) {
+    return `<span class="op-badge on ${green ? "g" : ""}">${label}</span>`;
+  }
+  return `<span class="op-badge off">${label}</span>`;
+}
+function statusPill(ok, onLabel, offLabel, green = false) {
+  if (ok === null || ok === undefined) return `<span class="op-pill">--</span>`;
+  if (ok) {
+    return `<span class="op-pill ok ${green ? "g" : ""}"><span class="dot ok"></span>${onLabel}</span>`;
+  }
+  return `<span class="op-pill warn"><span class="dot warn"></span>${offLabel}</span>`;
 }
 
+/* ========= Frame loop ========= */
 const startTime = Date.now();
 let tick = 0;
 
@@ -179,19 +282,31 @@ function frame() {
   const snap = ds.snapshot();
 
   renderHeader(snap);
-  renderStats(snap);
-  renderWallets(snap);
-  renderRpcs(snap);
-  renderResidual(snap);
-  renderLatency(snap);
-  renderConsole(snap);
+
+  if (currentView === "dashboard") {
+    renderStats(snap);
+    renderResidual(snap);
+    renderLatency(snap);
+  } else if (currentView === "wallets") {
+    renderWalletsView(snap);
+  } else if (currentView === "rpc") {
+    renderRpcView(snap);
+  } else if (currentView === "eip7702") {
+    renderDelegView(snap);
+  } else if (currentView === "events") {
+    renderConsole(snap);
+  }
+
+  // always feed the radar so it stays smooth across views
+  if (window.__CRS_RADAR__) window.__CRS_RADAR__.setStages(snap.latency_metrics || []);
 
   $("meta-uptime").textContent = fmtDuration(Date.now() - startTime);
   $("meta-uplink").innerHTML = ds.useLive
-    ? '<span class="dot"></span> LIVE'
-    : '<span class="dot" style="background:#ffb454;box-shadow:0 0 8px #ffb454"></span> SIM';
+    ? '<span class="dot ok"></span> LIVE'
+    : '<span class="dot warn"></span> SIM';
   $("foot-tick").textContent = ++tick;
 }
 
+initRouter();
 setInterval(frame, 1000);
 frame();
