@@ -114,7 +114,7 @@ function renderLatency(s) {
   const list = $("latency-list");
   list.innerHTML = (s.latency_metrics || []).map(m => `
     <div class="latency-row">
-      <span class="latency-stage">${m.stage}</span>
+      <span class="latency-stage">${m.stage.replace(/_/g, " ")}</span>
       <span class="latency-num last">${m.last_ms ?? "—"}</span>
       <span class="latency-num avg">${m.avg_ms ?? "—"}</span>
       <span class="latency-num max">${m.max_ms ?? "—"}</span>
