@@ -177,7 +177,7 @@ impl MarketSnapshotCollector {
         provider: Arc<M>,
         metadata: PoolMetadata,
         timestamp_ms: u64,
-    ) -> Result<Option<MarketSnapshot>, M::Error> {
+    ) -> Result<Option<MarketSnapshot>, ethers::contract::ContractError<M>> {
         let pair = UniswapV2PairSnapshotView::new(metadata.pool_address, provider.clone());
         let reserves = pair.get_reserves().call().await?;
         let block_number = provider
