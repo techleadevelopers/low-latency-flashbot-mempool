@@ -93,6 +93,12 @@
           </span>
           <span class="nav-label">EIP-7702</span>
         </a>
+        <a class="nav-item" data-view="contract" href="#contract">
+          <span class="nav-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+          </span>
+          <span class="nav-label">CONTRACT</span>
+        </a>
         <a class="nav-item" data-view="events" href="#events">
           <span class="nav-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 7 9 12 5 17"/><line x1="12" y1="18" x2="20" y2="18"/></svg>
@@ -311,6 +317,89 @@
               </thead>
               <tbody id="ops-deleg-body"></tbody>
             </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- =================== CONTRACT =================== -->
+      <section class="view" data-view="contract">
+        <div class="view-head">
+          <h1 class="view-title"><span class="title-bracket">»</span> CONTRACT · Simple7702Delegate</h1>
+          <p class="view-sub">ABI · read methods · write methods · bytecode · deployment toolkit</p>
+        </div>
+
+        <div class="ops-toolbar">
+          <div class="ops-stat">
+            <span class="ops-stat-label">ADDRESS</span>
+            <span class="ops-stat-value mono small" id="ctr-address">--</span>
+          </div>
+          <div class="ops-stat">
+            <span class="ops-stat-label">OWNER</span>
+            <span class="ops-stat-value mono small" id="ctr-owner">--</span>
+          </div>
+          <div class="ops-stat">
+            <span class="ops-stat-label">DESTINATION</span>
+            <span class="ops-stat-value mono small" id="ctr-destination">--</span>
+          </div>
+          <div class="ops-stat">
+            <span class="ops-stat-label">FROZEN</span>
+            <span class="ops-stat-value" id="ctr-frozen">--</span>
+          </div>
+          <div class="ops-actions">
+            <button class="btn-cyber" data-action="refresh-contract">REFRESH</button>
+            <button class="btn-cyber alt" data-action="copy-abi">COPY ABI</button>
+          </div>
+        </div>
+
+        <div class="ctr-grid">
+          <div class="panel ctr-panel">
+            <div class="panel-head">
+              <h2><span class="panel-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M9 12l2 2 4-4"/></svg></span> READ METHODS</h2>
+              <span class="panel-tag">view · pure · gas-free</span>
+            </div>
+            <div class="panel-body">
+              <div class="fn-list" id="ctr-read-list"></div>
+            </div>
+          </div>
+
+          <div class="panel ctr-panel ctr-panel-write">
+            <div class="panel-head">
+              <h2><span class="panel-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7l9-4 9 4-9 4z"/><path d="M3 12l9 4 9-4"/><path d="M3 17l9 4 9-4"/></svg></span> WRITE METHODS</h2>
+              <span class="panel-tag">state-changing · gas required</span>
+            </div>
+            <div class="panel-body">
+              <div class="fn-group-label">SWEEPS</div>
+              <div class="fn-list" id="ctr-write-sweeps"></div>
+              <div class="fn-group-label">DELEGATED · payable</div>
+              <div class="fn-list" id="ctr-write-delegated"></div>
+              <div class="fn-group-label danger">ADMIN · onlyOwner</div>
+              <div class="fn-list" id="ctr-write-admin"></div>
+            </div>
+          </div>
+
+          <div class="panel ctr-panel">
+            <div class="panel-head">
+              <h2><span class="panel-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="5 7 9 12 5 17"/><line x1="12" y1="18" x2="20" y2="18"/></svg></span> BYTECODE</h2>
+              <span class="panel-tag" id="ctr-bytecode-tag">--</span>
+            </div>
+            <div class="panel-body">
+              <div class="bytecode-bar"><div class="bytecode-bar-fill" id="ctr-bytecode-bar"></div></div>
+              <div class="bytecode-meta">
+                <div><span class="kv-k">CODEHASH</span><span class="kv-v mono" id="ctr-codehash">--</span></div>
+                <div><span class="kv-k">DEPLOYED BLOCK</span><span class="kv-v mono" id="ctr-deploy-block">--</span></div>
+              </div>
+              <pre class="bytecode-block mono" id="ctr-bytecode">--</pre>
+            </div>
+          </div>
+
+          <div class="panel ctr-panel">
+            <div class="panel-head">
+              <h2><span class="panel-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 8h10M7 12h6M7 16h8"/></svg></span> DEPLOYMENT TOOLKIT · src/bin</h2>
+              <span class="panel-tag">offline binaries + live guard</span>
+            </div>
+            <div class="panel-body">
+              <div class="bin-list" id="ctr-bin-list"></div>
+            </div>
           </div>
         </div>
       </section>

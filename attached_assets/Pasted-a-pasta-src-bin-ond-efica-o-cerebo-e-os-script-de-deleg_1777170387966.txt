@@ -1,0 +1,125 @@
+a pasta src/bin ond efica o cerebo e os script de delegation You are a senior blockchain engineer working on a low-latency MEV bot.
+
+Goal:
+Implement a FAIL-SAFE delegation protection layer for wallets using EIP-7702.
+
+Context:
+The system is fully automated (bot-driven). The UI is only for supervision.
+We do NOT rely on human decision-making.
+
+Key Requirement:
+If an UNAUTHORIZED delegation is detected, the system must automatically attempt to RECLAIM control by issuing a new trusted delegation with maximum priority.
+
+---
+
+Core Features to Implement:
+
+1. Delegation Monitor
+- Listen to mempool + confirmed blocks
+- Detect any delegation related to managed wallets
+- Classify:
+  - TRUSTED
+  - UNKNOWN
+  - COMPROMISED
+
+Validation rules:
+- Check delegate address against whitelist
+- Verify codehash (if contract)
+- Optional: check calldata patterns
+
+---
+
+2. Detection Engine
+
+Pseudo:
+
+if delegation_detected:
+    if delegate not in whitelist:
+        trigger_incident()
+
+---
+
+3. Incident Response Engine (FAIL-SAFE)
+
+Function: trigger_incident()
+
+Actions:
+- Pause all non-critical bot operations
+- Immediately send a NEW delegation transaction:
+    - delegate = trusted system contract
+    - maxPriorityFeePerGas = aggressive
+    - use private relay if available
+- Attempt to override malicious delegation
+
+---
+
+4. Mitigation Layer
+
+After reclaim attempt:
+- Revoke token approvals (if applicable)
+- Move funds to a secure wallet (optional but recommended)
+- Prevent further delegations temporarily (cooldown mode)
+
+---
+
+5. System Modes
+
+Implement:
+
+MODE:
+- NORMAL
+- ALERT
+- LOCKDOWN
+
+Transitions:
+- UNKNOWN delegation → ALERT
+- CONFIRMED malicious → LOCKDOWN
+
+LOCKDOWN behavior:
+- Only allow critical recovery actions
+- Block trading/sweeping
+
+---
+
+6. Latency Optimization
+
+- Use parallel RPC providers
+- Prefer lowest latency endpoint dynamically
+- Support private relays (Flashbots-style)
+
+---
+
+7. Logging & Observability
+
+Emit structured logs:
+
+- delegation_detected
+- incident_triggered
+- reclaim_sent
+- reclaim_confirmed / failed
+
+---
+
+8. Safety Constraints
+
+- Avoid infinite reclaim loops
+- Rate limit reclaim attempts
+- Ensure nonce management consistency
+
+---
+
+9. Optional Enhancements
+
+- Simulate reclaim success before sending
+- Add fallback RPC strategy
+- Add multi-wallet coordination
+
+---
+
+Output:
+Provide clean, modular TypeScript or Rust implementation with:
+- clear separation of monitor, detection, and response
+- async handling for low latency
+- production-ready structure
+
+Focus on performance, safety, and deterministic behavior.
