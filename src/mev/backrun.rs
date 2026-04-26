@@ -13,6 +13,7 @@ use crate::mev::opportunity::{
     clamp_score, roi_bps, wei_to_eth_f64, MevOpportunity, OpportunityKind, OpportunityScore,
 };
 use crate::rpc::RpcFleet;
+use crate::runtime_mode::RuntimeModeController;
 use ethers::abi::{self, ParamType, Token};
 use ethers::providers::{Middleware, Provider, StreamExt, Ws};
 use ethers::types::{Address, Transaction, U256};
@@ -56,6 +57,7 @@ pub async fn run(
     config: Arc<Config>,
     rpc_fleet: Arc<RpcFleet>,
     dashboard: DashboardHandle,
+    runtime_mode: RuntimeModeController,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(ws_url) = config.mempool_ws_url() else {
         let message = "MEV backrun enabled but no websocket URL is available".to_string();
@@ -110,6 +112,10 @@ pub async fn run(
     );
 
     while let Some(tx_hash) = stream.next().await {
+        if !runtime_mode.permits_non_critical() {
+            continue;
+        }
+
         let lookup_started = Instant::now();
         let tx = match provider.get_transaction(tx_hash).await {
             Ok(Some(tx)) => tx,
