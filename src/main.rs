@@ -3,12 +3,14 @@ mod cache;
 mod config;
 mod contract;
 mod dashboard;
+mod delegation_guard;
 mod extractor;
 mod frontrun;
 mod mev;
 mod monitor;
 mod queue;
 mod rpc;
+mod runtime_mode;
 mod storage;
 mod wallets;
 
@@ -16,112 +18,13 @@ use benchmark::maybe_run_network_benchmark;
 use cache::RuntimeCache;
 use config::Config;
 use dashboard::DashboardHandle;
+use delegation_guard::start as start_delegation_guard;
 use rpc::RpcFleet;
+use runtime_mode::RuntimeModeController;
 use std::sync::Arc;
 use storage::Storage;
 use tracing::{error, info};
 use wallets::load_wallets;
-
-// ============================================================
-// GUARDIAN - Monitor de Delegação EIP-7702
-// ============================================================
-use ethers::prelude::*;
-use std::time::Duration;
-
-async fn start_delegation_guardian(
-    rpc_fleet: Arc<RpcFleet>,
-    config: Arc<Config>,
-    wallet_address: Address,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let our_contract = config.contract;
-    let wallet_addr = wallet_address;
-
-    info!("🛡️ Guardian iniciado para {:?}", wallet_addr);
-    info!("   Contrato protegido: {:?}", our_contract);
-
-    let endpoint = rpc_fleet.read_endpoint();
-    let provider = endpoint.provider.clone();
-
-    let mut last_nonce = provider
-        .get_transaction_count(wallet_addr, None)
-        .await?
-        .as_u64();
-
-    loop {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-
-        let current_nonce = match provider.get_transaction_count(wallet_addr, None).await {
-            Ok(nonce) => nonce.as_u64(),
-            Err(e) => {
-                error!("Guardian: falha ao ler nonce: {}", e);
-                continue;
-            }
-        };
-
-        let code = match provider.get_code(wallet_addr, None).await {
-            Ok(code) => code,
-            Err(e) => {
-                error!("Guardian: falha ao ler código: {}", e);
-                continue;
-            }
-        };
-
-        // Verifica se a delegação ainda é nossa
-        let is_our_delegation =
-            if code.len() >= 23 && code.as_ref().starts_with(&[0xef, 0x01, 0x00]) {
-                let delegated = Address::from_slice(&code.as_ref()[3..23]);
-                delegated == our_contract
-            } else {
-                false
-            };
-
-        if current_nonce != last_nonce {
-            info!(
-                "⚠️ Guardian: nonce mudou {} -> {}",
-                last_nonce, current_nonce
-            );
-
-            if !is_our_delegation {
-                error!("🚨 GUARDIAN: Delegação sobrescrita!");
-                error!("   Reaplicando com nonce {}...", current_nonce + 1);
-
-                // Usa o sponsor wallet do config
-                let sponsor_key = &config.sender_private_key;
-                let rpc_url = rpc_fleet.send_endpoint().url;
-
-                let status = std::process::Command::new("cargo")
-                    .args(&[
-                        "run",
-                        "--bin",
-                        "predelegate_7702",
-                        "--",
-                        "--wallets",
-                        config.wallets.to_str().unwrap_or("keys.txt"),
-                        "--rpc-url",
-                        &rpc_url,
-                        "--chain-id",
-                        &config.chain_id.to_string(),
-                        "--delegate-contract",
-                        &format!("{:?}", our_contract),
-                        "--sponsor-private-key",
-                        sponsor_key,
-                        "--target-nonce",
-                        &(current_nonce + 1).to_string(),
-                    ])
-                    .status();
-
-                match status {
-                    Ok(s) if s.success() => info!("✅ Guardian: delegação reaplicada!"),
-                    Ok(_) => error!("❌ Guardian: falha ao reaplicar!"),
-                    Err(e) => error!("❌ Guardian: erro ao executar: {}", e),
-                }
-            }
-        }
-
-        last_nonce = current_nonce;
-    }
-}
-// ============================================================
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -143,6 +46,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let invalid_keys = loaded_wallets.invalid;
     let unique_wallets = loaded_wallets.unique;
     let wallets = loaded_wallets.wallets;
+    let runtime_mode = RuntimeModeController::new();
 
     info!("Wallet source: {}", config.wallets.display());
     info!("Keys read: {}", total_read);
@@ -222,6 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Dashboard: http://{}", config.dashboard_addr);
     info!("Mempool monitor: {}", config.enable_mempool_monitor);
     info!("MEV engine: {}", config.mev.enabled);
+    info!("Delegation guard: {}", config.delegation_guard.enabled);
 
     if maybe_run_network_benchmark(config.clone(), rpc_fleet.clone(), &wallets).await? {
         return Ok(());
@@ -302,9 +207,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if config.enable_mempool_monitor {
         let frontrun_config = config.clone();
         let frontrun_dashboard = dashboard.clone();
+        let frontrun_mode = runtime_mode.clone();
         tokio::spawn(async move {
             if let Err(err) =
-                frontrun::start_mempool_monitor(frontrun_config, frontrun_dashboard).await
+                frontrun::start_mempool_monitor(frontrun_config, frontrun_dashboard, frontrun_mode)
+                    .await
             {
                 error!("Mempool monitor failed: {}", err);
             }
@@ -315,31 +222,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let mev_config = config.clone();
         let mev_fleet = rpc_fleet.clone();
         let mev_dashboard = dashboard.clone();
+        let mev_mode = runtime_mode.clone();
         tokio::spawn(async move {
-            if let Err(err) = mev::run(mev_config, mev_fleet, mev_dashboard).await {
+            if let Err(err) = mev::run(mev_config, mev_fleet, mev_dashboard, mev_mode).await {
                 error!("MEV engine failed: {}", err);
             }
         });
     }
 
-    // ============================================================
-    // INJETANDO O GUARDIAN PARA CADA WALLET
-    // ============================================================
-    let guardian_config = config.clone();
-    let guardian_fleet = rpc_fleet.clone();
-    for wallet in &wallets {
-        let wallet_addr = wallet.address();
-        let cfg = guardian_config.clone();
-        let fleet = guardian_fleet.clone();
-
-        tokio::spawn(async move {
-            if let Err(e) = start_delegation_guardian(fleet, cfg, wallet_addr).await {
-                error!("Guardian falhou para {:?}: {}", wallet_addr, e);
-            }
-        });
+    if let Err(err) = start_delegation_guard(
+        rpc_fleet.clone(),
+        config.clone(),
+        wallets.clone(),
+        dashboard.clone(),
+        runtime_mode.clone(),
+    )
+    .await
+    {
+        error!("Delegation guard failed to start: {}", err);
     }
-    info!("🛡️ Guardian injectado para {} wallet(s)", wallets.len());
-    // ============================================================
 
     if duplicate_keys > 0 {
         dashboard.event(
@@ -362,8 +263,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
 
-    if let Err(err) =
-        monitor::start_monitor(rpc_fleet, runtime_cache, config, wallets, dashboard).await
+    if let Err(err) = monitor::start_monitor(
+        rpc_fleet,
+        runtime_cache,
+        config,
+        wallets,
+        dashboard,
+        runtime_mode,
+    )
+    .await
     {
         error!("Fatal error: {}", err);
     }
