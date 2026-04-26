@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CRS // Corporate Residual Sweeper</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;700&family=Orbitron:wght@500;700;900&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/pixi.js@7.4.2/dist/pixi.min.js"></script>
+</head>
+<body>
+  <canvas id="fx-canvas"></canvas>
+
+  <div class="scanline"></div>
+  <div class="vignette"></div>
+
+  <header class="hud-header">
+    <div class="brand">
+      <div class="brand-glyph" aria-hidden="true">
+        <span class="glyph-ring"></span>
+        <span class="glyph-core">C</span>
+      </div>
+      <div class="brand-text">
+        <div class="brand-line">CORPORATE_RESIDUAL_SWEEPER</div>
+        <div class="brand-sub">v1.0 // ghostinject // micro-residual treasury</div>
+      </div>
+    </div>
+
+    <div class="header-meta">
+      <div class="meta-cell">
+        <span class="meta-label">MODE</span>
+        <span id="meta-mode" class="meta-value mode-shadow">--</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-label">NETWORK</span>
+        <span id="meta-network" class="meta-value">--</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-label">CHAIN</span>
+        <span id="meta-chain" class="meta-value">--</span>
+      </div>
+      <div class="meta-cell wide">
+        <span class="meta-label">CONTRACT</span>
+        <span id="meta-contract" class="meta-value mono">--</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-label">UPLINK</span>
+        <span id="meta-uplink" class="meta-value status-on"><span class="dot"></span> LIVE</span>
+      </div>
+      <div class="meta-cell">
+        <span class="meta-label">UPTIME</span>
+        <span id="meta-uptime" class="meta-value">00:00:00</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="hud-grid">
+    <!-- Top stat strip -->
+    <section class="stat-strip">
+      <div class="stat-card neon-cyan">
+        <div class="stat-label">WALLETS_ARMED</div>
+        <div class="stat-value" id="stat-wallets">0</div>
+        <div class="stat-foot"><span id="stat-keys-read">0</span> keys read · <span id="stat-keys-dup">0</span> dup · <span id="stat-keys-bad">0</span> invalid</div>
+      </div>
+      <div class="stat-card neon-magenta">
+        <div class="stat-label">SWEEPS_ATTEMPTED</div>
+        <div class="stat-value" id="stat-attempted">0</div>
+        <div class="stat-foot">scan_interval <span id="stat-interval">0</span> ms</div>
+      </div>
+      <div class="stat-card neon-green">
+        <div class="stat-label">SWEEPS_OK</div>
+        <div class="stat-value" id="stat-ok">0</div>
+        <div class="stat-foot">success_rate <span id="stat-rate">0.0%</span></div>
+      </div>
+      <div class="stat-card neon-red">
+        <div class="stat-label">SWEEPS_FAIL</div>
+        <div class="stat-value" id="stat-fail">0</div>
+        <div class="stat-foot">last_scan <span id="stat-last-scan">--</span></div>
+      </div>
+      <div class="stat-card neon-amber">
+        <div class="stat-label">REALIZED_PROFIT_ETH</div>
+        <div class="stat-value" id="stat-profit">0.000000</div>
+        <div class="stat-foot">min_net_profit <span id="stat-min-profit">0</span> ETH</div>
+      </div>
+    </section>
+
+    <!-- Wallet Fleet -->
+    <section class="panel panel-wallets">
+      <div class="panel-head">
+        <h2><span class="bracket">[</span> WALLET_FLEET <span class="bracket">]</span></h2>
+        <span class="panel-tag">live · sorted by balance</span>
+      </div>
+      <div class="panel-body wallet-grid" id="wallet-grid">
+        <!-- wallets injected -->
+      </div>
+    </section>
+
+    <!-- RPC Fleet -->
+    <section class="panel panel-rpc">
+      <div class="panel-head">
+        <h2><span class="bracket">[</span> RPC_FLEET <span class="bracket">]</span></h2>
+        <span class="panel-tag">read · send · health</span>
+      </div>
+      <div class="panel-body" id="rpc-list">
+        <!-- rpcs injected -->
+      </div>
+    </section>
+
+    <!-- Residual Rankings -->
+    <section class="panel panel-residual">
+      <div class="panel-head">
+        <h2><span class="bracket">[</span> RESIDUAL_RANKING <span class="bracket">]</span></h2>
+        <span class="panel-tag">top 10 · score = detections + sweeps + profit</span>
+      </div>
+      <div class="panel-body">
+        <table class="data-table" id="residual-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>WALLET</th>
+              <th>CLASS</th>
+              <th>DET</th>
+              <th>SWP</th>
+              <th>DETECTED</th>
+              <th>REALIZED</th>
+              <th>SCORE</th>
+            </tr>
+          </thead>
+          <tbody id="residual-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Latency Radar -->
+    <section class="panel panel-latency">
+      <div class="panel-head">
+        <h2><span class="bracket">[</span> LATENCY_RADAR <span class="bracket">]</span></h2>
+        <span class="panel-tag">ms · last/avg/max</span>
+      </div>
+      <div class="panel-body latency-body">
+        <div class="latency-radar">
+          <canvas id="radar-canvas" width="320" height="320"></canvas>
+        </div>
+        <div class="latency-list" id="latency-list">
+          <!-- latency rows -->
+        </div>
+      </div>
+    </section>
+
+    <!-- Event Console -->
+    <section class="panel panel-console">
+      <div class="panel-head">
+        <h2><span class="bracket">[</span> EVENT_STREAM <span class="bracket">]</span></h2>
+        <span class="panel-tag">tail -f bot_state.sqlite</span>
+      </div>
+      <div class="panel-body console" id="event-console">
+        <!-- events -->
+      </div>
+    </section>
+  </main>
+
+  <footer class="hud-foot">
+    <span>// custodia reativa · micro-residuo positivo · valor_liquido = nativo + tokens_em_eth - gas_estimado*gas_price</span>
+    <span class="foot-right">FPS <span id="foot-fps">60</span> · TICK <span id="foot-tick">0</span></span>
+  </footer>
+
+  <script type="module" src="/js/data.js"></script>
+  <script type="module" src="/js/fx.js"></script>
+  <script type="module" src="/js/radar.js"></script>
+  <script type="module" src="/js/app.js"></script>
+</body>
+</html>
