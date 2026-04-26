@@ -829,18 +829,147 @@ body { position: relative; min-height: 100vh; padding: 12px; }
 }
 
 /* ===== Responsive ===== */
+
+/* --- Tablet / small laptop: 1100px --- */
 @media (max-width: 1100px) {
   .hud-grid { grid-template-columns: 1fr; }
   .panel-latency, .panel-residual { grid-column: 1 / -1; grid-row: auto; }
-  .header-meta { grid-template-columns: repeat(4, auto); }
-  .rpc-ops-grid { grid-template-columns: 1fr; }
+  .header-meta { grid-template-columns: repeat(4, auto); row-gap: 6px; }
+  .rpc-ops-grid { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+  .sidebar { width: 180px; }
+  .nav-item { padding: 9px 10px; font-size: 10px; letter-spacing: 0.14em; }
 }
-@media (max-width: 800px) {
-  body { padding: 6px; }
-  .layout-shell { flex-direction: column; }
+
+/* --- Tablet portrait: 900px --- */
+@media (max-width: 900px) {
+  body { padding: 8px; }
+
+  /* Header stacks: brand on top, meta wraps below */
+  .hud-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    padding: 12px 14px;
+  }
+  .header-meta {
+    margin-left: 0;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  .meta-cell {
+    border-left: none;
+    border-top: 1px solid var(--panel-edge);
+    padding: 6px 8px;
+    min-width: 0;
+  }
+  .meta-cell.wide { min-width: 0; grid-column: span 2; }
+  .meta-value.mono { font-size: 10px; word-break: break-all; }
+
+  /* Sidebar -> top horizontal nav */
+  .layout-shell { flex-direction: column; gap: 10px; }
   .sidebar { width: 100%; }
-  .side-nav { flex-direction: row; flex-wrap: wrap; padding: 8px; }
+  .side-nav {
+    flex-direction: row;
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    padding: 8px 10px;
+    gap: 6px;
+    scrollbar-width: thin;
+  }
+  .nav-item {
+    flex: 0 0 auto;
+    padding: 8px 12px;
+    font-size: 10px;
+    letter-spacing: 0.14em;
+  }
+  .nav-label { white-space: nowrap; }
   .side-foot { display: none; }
+
+  /* Stat strip 2 cols, hero spans full width */
   .stat-strip { grid-template-columns: repeat(2, 1fr); }
-  .header-meta { grid-template-columns: repeat(3, auto); }
+  .stat-card-hero { grid-column: 1 / -1; }
+  .stat-card-hero .stat-value { font-size: 42px; }
+
+  /* Ops toolbar wraps cleanly */
+  .ops-toolbar { flex-wrap: wrap; gap: 10px; }
+  .ops-actions { margin-left: 0; width: 100%; }
+}
+
+/* --- Mobile: 600px --- */
+@media (max-width: 600px) {
+  body { padding: 6px; }
+
+  .brand-line { font-size: 14px; letter-spacing: 0.12em; }
+  .brand-sub  { font-size: 10px; }
+  .brand-glyph { width: 40px; height: 40px; }
+  .glyph-core { font-size: 18px; }
+
+  .header-meta { grid-template-columns: repeat(2, 1fr); }
+  .meta-cell.wide { grid-column: span 2; }
+  .meta-label { font-size: 8px; }
+  .meta-value { font-size: 12px; }
+
+  .stat-strip { grid-template-columns: 1fr; gap: 8px; }
+  .stat-value { font-size: 24px; }
+  .stat-card-hero .stat-value { font-size: 34px; }
+
+  .view-title { font-size: 15px; letter-spacing: 0.14em; }
+  .view-sub   { font-size: 10px; }
+
+  /* Ops stat row compresses */
+  .ops-toolbar { padding: 10px; gap: 8px; }
+  .ops-stat { padding: 4px 8px; }
+  .ops-stat-value { font-size: 13px; }
+  .ops-stat-value.small { font-size: 10px; word-break: break-all; }
+  .ops-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .btn-cyber { padding: 7px 10px; font-size: 9px; flex: 1 1 auto; }
+
+  /* Tables: horizontal scroll + hide non-essential columns */
+  .op-table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .op-table { min-width: 480px; font-size: 11px; }
+  .op-table thead th, .op-table tbody td { padding: 8px 10px; }
+
+  /* Wallets table — drop RPC + LAST SEEN columns to keep it readable */
+  #ops-wallet-table th:nth-child(4),
+  #ops-wallet-table td:nth-child(4),
+  #ops-wallet-table th:nth-child(7),
+  #ops-wallet-table td:nth-child(7) { display: none; }
+
+  /* EIP-7702 table — drop DELEGATE TARGET + LAST CHECK */
+  #ops-deleg-table th:nth-child(4),
+  #ops-deleg-table td:nth-child(4),
+  #ops-deleg-table th:nth-child(6),
+  #ops-deleg-table td:nth-child(6) { display: none; }
+
+  /* Ranking table — drop CLASS + DETECTED */
+  #residual-table th:nth-child(3),
+  #residual-table td:nth-child(3),
+  #residual-table th:nth-child(6),
+  #residual-table td:nth-child(6) { display: none; }
+  #residual-table { font-size: 11px; }
+
+  /* RPC cards full width */
+  .rpc-ops-grid { grid-template-columns: 1fr; gap: 10px; }
+  .rpc-card { padding: 10px 12px; }
+  .rpc-card-grid { grid-template-columns: 1fr 1fr; }
+
+  /* Console smaller */
+  .console-line { grid-template-columns: 60px 50px 1fr; gap: 6px; }
+  .console-time { font-size: 9px; }
+  .console-level { font-size: 9px; }
+  .console-msg { font-size: 11px; }
+
+  /* Footer compact */
+  .hud-foot { flex-direction: column; gap: 4px; padding: 6px 10px; font-size: 9px; text-align: center; }
+  .hud-foot .foot-right { margin-left: 0; }
+
+  /* Latency radar shrinks gracefully */
+  #radar-canvas { max-width: 220px; }
+  .latency-body { padding: 12px; }
+}
+
+/* --- Tiny phones: 380px --- */
+@media (max-width: 380px) {
+  .header-meta { grid-template-columns: 1fr 1fr; }
+  .stat-card-hero .stat-value { font-size: 28px; }
 }
