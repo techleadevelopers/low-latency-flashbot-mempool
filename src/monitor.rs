@@ -7,6 +7,7 @@ use crate::queue::{
     estimated_total_cost_wei, ExecutionMode, OperationType, ResidualCandidate, SweepQueue,
 };
 use crate::rpc::RpcFleet;
+use crate::runtime_mode::{RuntimeMode, RuntimeModeController};
 use ethers::prelude::*;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -36,6 +37,7 @@ pub async fn start_monitor(
     config: Arc<Config>,
     wallets: Vec<LocalWallet>,
     dashboard: DashboardHandle,
+    runtime_mode: RuntimeModeController,
 ) -> Result<(), Box<dyn std::error::Error>> {
     info!(
         "Starting Corporate Residual Sweeper for {} wallets",
@@ -67,8 +69,30 @@ pub async fn start_monitor(
     let mut last_seen_block: Option<u64> = None;
     let mut mock_hot_rounds_executed = 0usize;
     let mut active_sweeps: JoinSet<SweepTaskResult> = JoinSet::new();
+    let mut reported_pause_mode: Option<RuntimeMode> = None;
 
     loop {
+        let current_mode = runtime_mode.mode();
+        match current_mode {
+            RuntimeMode::Normal => {
+                reported_pause_mode = None;
+            }
+            RuntimeMode::Alert | RuntimeMode::Lockdown => {
+                if reported_pause_mode != Some(current_mode) {
+                    dashboard.event(
+                        "warn",
+                        format!(
+                            "non-critical sweeps paused by runtime mode {}",
+                            current_mode.as_str()
+                        ),
+                    );
+                    reported_pause_mode = Some(current_mode);
+                }
+                tokio::time::sleep(Duration::from_millis(current_interval_ms.max(500))).await;
+                continue;
+            }
+        }
+
         while let Some(result) = active_sweeps.try_join_next() {
             match result {
                 Ok(task) => {
