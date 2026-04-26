@@ -171,30 +171,3 @@ function frame() {
 
 setInterval(frame, 1000);
 frame();
-
-// === Collapsible Wallet Fleet panel ===
-(function setupWalletToggle() {
-  const panel = document.getElementById("panel-wallets");
-  const toggle = document.getElementById("wallet-toggle");
-  if (!panel || !toggle) return;
-
-  const STORAGE_KEY = "crs.wallets.collapsed";
-  if (localStorage.getItem(STORAGE_KEY) === "1") {
-    panel.classList.add("collapsed");
-    toggle.setAttribute("aria-expanded", "false");
-  }
-
-  function toggleCollapsed() {
-    const collapsed = panel.classList.toggle("collapsed");
-    toggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    localStorage.setItem(STORAGE_KEY, collapsed ? "1" : "0");
-  }
-
-  toggle.addEventListener("click", toggleCollapsed);
-  toggle.addEventListener("keydown", (e) => {
-    if (e.key === "Enter" || e.key === " ") {
-      e.preventDefault();
-      toggleCollapsed();
-    }
-  });
-})();
