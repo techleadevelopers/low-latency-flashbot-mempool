@@ -1,5 +1,6 @@
 use crate::config::{BotMode, Config};
 use crate::dashboard::DashboardHandle;
+use crate::runtime_mode::RuntimeModeController;
 use ethers::abi::{self, ParamType, Token};
 use ethers::middleware::SignerMiddleware;
 use ethers::providers::{Middleware, Provider, StreamExt, Ws};
@@ -39,6 +40,7 @@ pub struct FrontrunOpportunity {
 pub async fn start_mempool_monitor(
     config: Arc<Config>,
     dashboard: DashboardHandle,
+    runtime_mode: RuntimeModeController,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let Some(ws_url) = config.mempool_ws_url() else {
         let message = "mempool monitor enabled but no websocket URL is available".to_string();
@@ -62,6 +64,10 @@ pub async fn start_mempool_monitor(
     );
 
     while let Some(tx_hash) = stream.next().await {
+        if !runtime_mode.permits_non_critical() {
+            continue;
+        }
+
         match provider.get_transaction(tx_hash).await {
             Ok(Some(tx)) => {
                 if !is_supported_frontrun_tx(&tx) {
