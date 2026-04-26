@@ -422,8 +422,7 @@ body { position: relative; min-height: 100vh; padding: 12px; }
   max-height: 243px; overflow-y: auto; padding-right: 6px;
 }
 
-.panel-rpc .panel-body { max-height: 243px; overflow-y: auto; }
-.panel-latency .panel-body { max-height: 243px; overflow-y: auto; }
+.panel-latency .panel-body { min-height: 320px; }
 .wallet-card {
   position: relative;
   border: 1px solid var(--line);
