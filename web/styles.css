@@ -186,10 +186,16 @@ body { position: relative; min-height: 100vh; padding: 12px; }
   background: linear-gradient(90deg, rgba(0,245,255,0.06), rgba(0,245,255,0));
 }
 .panel-head h2 {
+  display: inline-flex; align-items: center; gap: 8px;
   font-family: 'Orbitron', sans-serif; font-size: 12px;
   letter-spacing: 0.2em; color: var(--text);
 }
-.panel-head .bracket { color: var(--cyan); margin: 0 4px; text-shadow: 0 0 6px var(--cyan); }
+.panel-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; color: var(--cyan);
+  filter: drop-shadow(0 0 4px var(--cyan)) drop-shadow(0 0 8px rgba(0,245,255,0.55));
+}
+.panel-icon svg { width: 100%; height: 100%; display: block; }
 .panel-tag { font-size: 10px; color: var(--muted); letter-spacing: 0.12em; }
 
 .panel-body { padding: 14px; }
