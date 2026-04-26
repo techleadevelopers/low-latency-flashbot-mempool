@@ -21,12 +21,14 @@ pub mod tip_discovery;
 use crate::config::{Config, MevStrategy};
 use crate::dashboard::DashboardHandle;
 use crate::rpc::RpcFleet;
+use crate::runtime_mode::RuntimeModeController;
 use std::sync::Arc;
 
 pub async fn run(
     config: Arc<Config>,
     rpc_fleet: Arc<RpcFleet>,
     dashboard: DashboardHandle,
+    runtime_mode: RuntimeModeController,
 ) -> Result<(), Box<dyn std::error::Error>> {
     dashboard.event(
         "info",
@@ -39,6 +41,6 @@ pub async fn run(
     );
 
     match config.mev.strategy {
-        MevStrategy::Backrun => backrun::run(config, rpc_fleet, dashboard).await,
+        MevStrategy::Backrun => backrun::run(config, rpc_fleet, dashboard, runtime_mode).await,
     }
 }
