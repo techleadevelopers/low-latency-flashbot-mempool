@@ -277,6 +277,49 @@ body { position: relative; min-height: 100vh; padding: 12px; }
   display: inline-block; margin-right: 4px;
   background: var(--green); box-shadow: 0 0 6px var(--green);
 }
+.wallet-badges {
+  display: flex; gap: 6px; margin-top: 8px;
+}
+.wallet-badge {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 9px; letter-spacing: 0.16em;
+  padding: 2px 6px; border-radius: 3px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  background: rgba(255,255,255,0.02);
+}
+.wallet-badge.on {
+  color: var(--cyan);
+  border-color: rgba(0,245,255,0.6);
+  background: rgba(0,245,255,0.08);
+  box-shadow: 0 0 6px rgba(0,245,255,0.35), inset 0 0 4px rgba(0,245,255,0.2);
+  text-shadow: 0 0 4px rgba(0,245,255,0.7);
+}
+.wallet-badge.appr.on {
+  color: var(--green);
+  border-color: rgba(108,255,139,0.6);
+  background: rgba(108,255,139,0.08);
+  box-shadow: 0 0 6px rgba(108,255,139,0.35), inset 0 0 4px rgba(108,255,139,0.2);
+  text-shadow: 0 0 4px rgba(108,255,139,0.7);
+}
+.wallet-badge.off {
+  color: var(--red);
+  border-color: rgba(255,77,109,0.45);
+  background: rgba(255,77,109,0.06);
+  opacity: 0.85;
+}
+
+/* meta-cell status dots */
+#meta-deleg, #meta-preappr {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: 'Orbitron', sans-serif;
+}
+#meta-deleg .dot, #meta-preappr .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  display: inline-block;
+}
+.dot.ok   { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.dot.warn { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
 
 /* ===== RPC list ===== */
 .rpc-row {

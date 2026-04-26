@@ -22,6 +22,19 @@ function renderHeader(s) {
   $("meta-network").textContent = (s.network || "?").toUpperCase();
   $("meta-chain").textContent = s.chain_id ?? "--";
   $("meta-contract").textContent = s.contract || "--";
+
+  const summary = s.delegation_summary;
+  const total = summary?.total ?? (s.hot_wallets || []).length;
+  const deleg = summary?.delegated ?? (s.hot_wallets || []).filter(w => w.delegated_7702).length;
+  const appr = summary?.preapproved ?? (s.hot_wallets || []).filter(w => w.preapproved).length;
+  const delegEl = $("meta-deleg");
+  const apprEl = $("meta-preappr");
+  if (delegEl) {
+    delegEl.innerHTML = `<span class="dot ${deleg === total ? "ok" : "warn"}"></span> ${deleg}/${total}`;
+  }
+  if (apprEl) {
+    apprEl.innerHTML = `<span class="dot ${appr === total ? "ok" : "warn"}"></span> ${appr}/${total}`;
+  }
 }
 
 function renderStats(s) {
@@ -50,15 +63,26 @@ function renderStats(s) {
 
 function renderWallets(s) {
   const grid = $("wallet-grid");
-  const html = (s.hot_wallets || []).map(w => `
+  const html = (s.hot_wallets || []).map(w => {
+    const deleg = w.delegated_7702;
+    const appr = w.preapproved;
+    const delegBadge = deleg === null || deleg === undefined
+      ? ""
+      : `<span class="wallet-badge ${deleg ? "on" : "off"}" title="EIP-7702 delegation">7702</span>`;
+    const apprBadge = appr === null || appr === undefined
+      ? ""
+      : `<span class="wallet-badge appr ${appr ? "on" : "off"}" title="Token pre-approve">APR</span>`;
+    return `
     <div class="wallet-card">
       <div class="wallet-addr"><span class="wallet-status"></span>${fmtAddr(w.address)}</div>
       <div class="wallet-row">
         <span class="wallet-balance">${parseFloat(w.balance_eth).toFixed(6)} Ξ</span>
         <span class="wallet-rpc">${shortenRpc(w.rpc)}</span>
       </div>
+      <div class="wallet-badges">${delegBadge}${apprBadge}</div>
     </div>
-  `).join("");
+  `;
+  }).join("");
   grid.innerHTML = html;
 }
 

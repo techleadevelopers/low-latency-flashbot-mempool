@@ -46,6 +46,8 @@ class DataSource {
       detected: rand(0, 0.012),
       realized: 0,
       lastSeen: Date.now() - randInt(2, 1800) * 1000,
+      delegated_7702: Math.random() < 0.92,
+      preapproved: Math.random() < 0.85,
     }));
     this.wallets.forEach(w => { w.realized = w.detected * rand(0.55, 0.95); });
 
@@ -203,7 +205,14 @@ class DataSource {
         address: w.address,
         balance_eth: w.balance.toFixed(6),
         rpc: w.rpc,
+        delegated_7702: w.delegated_7702,
+        preapproved: w.preapproved,
       })),
+      delegation_summary: {
+        delegated: this.wallets.filter(w => w.delegated_7702).length,
+        preapproved: this.wallets.filter(w => w.preapproved).length,
+        total: this.walletCount,
+      },
       top_residual_wallets: [...this.wallets]
         .map(w => ({
           wallet: w.address,
@@ -250,6 +259,14 @@ class DataSource {
         errors: r.errors ?? r.error_count ?? 0,
         last_block: r.last_block ?? 0,
       })),
+      hot_wallets: (d.hot_wallets || []).map(w => ({
+        address: w.address,
+        balance_eth: w.balance_eth,
+        rpc: w.rpc,
+        delegated_7702: w.delegated_7702 ?? w.delegated ?? null,
+        preapproved: w.preapproved ?? w.pre_approved ?? null,
+      })),
+      delegation_summary: d.delegation_summary || null,
     };
   }
 }
