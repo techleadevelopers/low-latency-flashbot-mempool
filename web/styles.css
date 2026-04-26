@@ -236,14 +236,34 @@ body { position: relative; min-height: 100vh; padding: 12px; }
   transition: max-height .35s ease, opacity .25s ease, padding .25s ease;
   max-height: 360px;
 }
-.panel.collapsed .panel-tag-collapsible {
-  opacity: 0;
-  transform: translateX(8px);
-  transition: opacity .2s ease, transform .2s ease;
-}
 .panel-tag-collapsible {
   transition: opacity .25s ease, transform .25s ease;
 }
+
+/* Collapsed wallet panel: shrink to icon-only chip */
+.panel-wallets {
+  transition: max-width .35s cubic-bezier(.5,.1,.3,1.05);
+}
+.panel-wallets.collapsed {
+  justify-self: start;
+  align-self: start;
+  width: max-content;
+  max-width: 64px;
+}
+.panel-wallets.collapsed .panel-head {
+  padding: 10px;
+  border-bottom: 0;
+  background: linear-gradient(180deg, rgba(0,245,255,0.08), rgba(0,245,255,0.02));
+}
+.panel-wallets.collapsed .panel-head h2 .bracket,
+.panel-wallets.collapsed .panel-head h2 > :not(.panel-icon),
+.panel-wallets.collapsed .head-right {
+  display: none;
+}
+.panel-wallets.collapsed .panel-icon {
+  width: 28px; height: 28px;
+}
+.panel-wallets.collapsed::after { display: none; }
 
 /* ===== Stat cards ===== */
 .stat-card {
